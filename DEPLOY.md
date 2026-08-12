@@ -138,7 +138,7 @@ CORS 오류가 나면 `public/config.js` 의 주소와 실제 Render 주소가 �
 - **비용** — Supabase Free(500MB), Render Free, GitHub Pages 전부 무료. 카드 등록 없이 가능하다.
 - **데이터 갱신** — 새 노선이 개통하면:
   ```bash
-  # scripts/README 의 Overpass 쿼리로 data/raw/osm_routes.json 갱신 후
+  bash scripts/fetch-osm.sh      # OSM 원본 재수집
   npm run build:graph && npm test
   ```
   푸시하면 Render 가 자동 재배포한다. `station_id` 가 밀려도 서버가 역 이름으로 다시 찾으므로
