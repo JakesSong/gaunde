@@ -12,7 +12,8 @@
     "calibrate": "node scripts/calibrate-speed.mjs",
     "test": "node --test test/*.test.mjs",
     "start": "node server/index.mjs",
-    "dev": "node --watch server/index.mjs"
+    "dev": "node --watch server/index.mjs",
+    "deploy:pages": "bash scripts/deploy-pages.sh"
   },
   "dependencies": {
     "cors": "^2.8.6",
