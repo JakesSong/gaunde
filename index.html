@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>가운데 — 모임 중간 지점 찾기</title>
+<meta name="description" content="모임 이름만 적으면 링크가 나옵니다. 각자 출발역만 고르면, 제일 오래 걸리는 사람이 가장 덜 억울한 역을 찾아줍니다.">
+<meta property="og:title" content="가운데 — 모임 중간 지점 찾기">
+<meta property="og:description" content="출발역만 고르면 끝. 가입 없음.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📍</text></svg>">
+<style>
+  :root{
+    --paper:#EDF0EA;
+    --card:#FFFFFF;
+    --ink:#15181B;
+    --sub:#7C857A;
+    --line:#00A84D;
+    --pin:#EF7C1C;
+    --rule:#DDE2D8;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"Pretendard","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    padding:22px 14px 40px;min-height:100vh;
+  }
+
+  /* ---- shell ---- */
+  .stage{width:100%;max-width:392px}
+  .brandbar{display:flex;align-items:baseline;gap:9px;margin:0 4px 12px}
+  .mark{font-size:21px;font-weight:800;letter-spacing:-.045em}
+  .mark i{font-style:normal;color:var(--line)}
+  .tagline{font-size:11.5px;color:var(--sub);letter-spacing:-.02em}
+
+  .phone{
+    background:var(--card);border-radius:26px;overflow:hidden;
+    box-shadow:0 1px 0 var(--rule),0 18px 40px -22px rgba(20,30,20,.45);
+    display:flex;flex-direction:column;min-height:620px;
+  }
+  .top{
+    padding:16px 20px 13px;border-bottom:1px solid var(--rule);
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+  }
+  .eyebrow{font-size:10.5px;font-weight:700;letter-spacing:.14em;color:var(--sub)}
+  .steps{display:flex;gap:5px}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--rule);transition:background .25s,transform .25s}
+  .dot.on{background:var(--line);transform:scale(1.35)}
+
+  .screen{padding:22px 20px 24px;display:none;flex:1;flex-direction:column}
+  .screen.on{display:flex;animation:rise .34s cubic-bezier(.2,.7,.3,1)}
+  @keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+
+  h2{font-size:23px;line-height:1.28;letter-spacing:-.045em;font-weight:800;margin:0 0 7px}
+  h2 em{font-style:normal;box-shadow:inset 0 -9px 0 rgba(0,168,77,.18)}
+  .lede{font-size:13px;line-height:1.6;color:var(--sub);margin:0 0 20px;letter-spacing:-.02em}
+
+  label.f{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin:0 0 7px}
+  input[type=text]{
+    width:100%;font:inherit;font-size:15.5px;letter-spacing:-.02em;
+    padding:13px 14px;border:1.5px solid var(--rule);border-radius:12px;background:#FBFCFA;color:var(--ink);
+  }
+  input[type=text]:focus{outline:none;border-color:var(--line);background:#fff}
+  .btn{
+    width:100%;font:inherit;font-size:15.5px;font-weight:700;letter-spacing:-.02em;
+    padding:15px;border:0;border-radius:12px;background:var(--ink);color:#fff;cursor:pointer;
+    transition:transform .12s,opacity .2s;
+  }
+  .btn:active{transform:scale(.985)}
+  .btn:disabled{opacity:.32;cursor:default}
+  .btn.alt{background:var(--line)}
+  .btn.ghost{background:transparent;color:var(--sub);border:1.5px solid var(--rule);font-weight:600}
+  .btn:focus-visible{outline:3px solid var(--pin);outline-offset:2px}
+  .spacer{flex:1;min-height:16px}
+
+  /* ---- station chips ---- */
+  .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px}
+  .chip{
+    font:inherit;font-size:13px;letter-spacing:-.02em;padding:8px 12px;border-radius:999px;
+    border:1.5px solid var(--rule);background:#fff;color:var(--ink);cursor:pointer;
+  }
+  .chip:hover{border-color:var(--line)}
+  .chip:focus-visible{outline:3px solid var(--pin);outline-offset:2px}
+
+  /* ---- 자동완성 ---- */
+  .ac-wrap{position:relative}
+  .ac{
+    position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:20;
+    background:#fff;border:1.5px solid var(--rule);border-radius:12px;overflow:hidden;
+    box-shadow:0 12px 28px -18px rgba(20,30,20,.5);max-height:236px;overflow-y:auto;display:none;
+  }
+  .ac.on{display:block}
+  .ac b{
+    display:flex;align-items:center;gap:8px;width:100%;text-align:left;font:inherit;font-weight:400;
+    font-size:14.5px;letter-spacing:-.02em;padding:11px 13px;border:0;border-bottom:1px solid var(--rule);
+    background:#fff;color:var(--ink);cursor:pointer;
+  }
+  .ac b:last-child{border-bottom:0}
+  .ac b.sel,.ac b:hover{background:var(--paper)}
+  .lns{display:flex;gap:3px;margin-left:auto;flex:none}
+  .ln{width:7px;height:7px;border-radius:50%}
+  .lntag{font-size:10.5px;color:var(--sub);letter-spacing:-.01em;margin-left:auto}
+
+  /* ---- roster ---- */
+  .roster{border-top:1px solid var(--rule);margin-top:20px;padding-top:14px}
+  .rhead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
+  .rhead b{font-size:12.5px;letter-spacing:-.02em}
+  .rhead span{font-size:11.5px;color:var(--sub)}
+  .row{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;letter-spacing:-.02em}
+  .avatar{width:24px;height:24px;border-radius:50%;background:var(--paper);color:var(--sub);
+    font-size:11px;font-weight:700;display:grid;place-items:center;flex:none}
+  .row .st{color:var(--sub);font-size:13px;margin-left:auto}
+  .row.waiting .st{color:#B9C1B5}
+  .row.me b{font-weight:700}
+  .empty{font-size:12.5px;color:#B9C1B5;letter-spacing:-.02em;padding:10px 0}
+
+  /* ---- signature: convergence line ---- */
+  .map{position:relative;padding:6px 0 2px;margin:4px 0 18px}
+  .rail{position:absolute;left:50%;top:0;bottom:0;width:3px;background:var(--rule);transform:translateX(-50%);border-radius:2px}
+  .railfill{position:absolute;left:50%;top:0;width:3px;background:var(--line);transform:translateX(-50%) scaleY(0);
+    transform-origin:top;border-radius:2px;height:100%;transition:transform .9s cubic-bezier(.4,.8,.3,1)}
+  .on .railfill{transform:translateX(-50%) scaleY(1)}
+  .stop{position:relative;display:flex;align-items:center;gap:12px;padding:12px 0;
+    opacity:0;transform:translateY(6px);animation:pop .5s forwards}
+  .stop:nth-child(3){animation-delay:.25s}
+  .stop:nth-child(4){animation-delay:.4s}
+  .stop:nth-child(5){animation-delay:.55s}
+  .stop:nth-child(6){animation-delay:.7s}
+  .stop:nth-child(7){animation-delay:.9s}
+  .stop:nth-child(8){animation-delay:1.05s}
+  .stop:nth-child(9){animation-delay:1.2s}
+  @keyframes pop{to{opacity:1;transform:none}}
+  .stop .who{width:calc(50% - 16px);text-align:right;font-size:13.5px;letter-spacing:-.02em}
+  .stop .who small{display:block;font-size:11.5px;color:var(--sub);margin-top:2px}
+  .node{width:13px;height:13px;border-radius:50%;background:#fff;border:3px solid var(--line);flex:none;z-index:1}
+  .stop .mins{width:calc(50% - 16px);font-size:12.5px;color:var(--sub);letter-spacing:-.02em}
+  .stop.hit{padding:16px 0}
+  .stop.hit .node{width:26px;height:26px;border-width:4px;border-color:var(--pin);
+    box-shadow:0 0 0 6px rgba(239,124,28,.14)}
+  .stop.hit .who{font-size:19px;font-weight:800;letter-spacing:-.045em}
+  .stop.hit .mins{font-size:12px;font-weight:700;color:var(--pin);letter-spacing:.04em}
+
+  .verdict{background:var(--paper);border-radius:14px;padding:14px 15px;font-size:13px;
+    line-height:1.62;letter-spacing:-.02em;color:#3D453C}
+  .verdict b{color:var(--ink)}
+
+  .alts{margin-top:14px;border-top:1px solid var(--rule);padding-top:12px}
+  .alts .rhead{margin-bottom:6px}
+  .altrow{display:flex;align-items:baseline;gap:8px;padding:6px 0;font-size:13px;letter-spacing:-.02em}
+  .altrow span{color:var(--sub);font-size:12px;margin-left:auto}
+
+  .linkbox{display:flex;align-items:center;gap:10px;border:1.5px dashed var(--rule);
+    border-radius:12px;padding:12px 14px;font-size:13px;color:var(--sub);letter-spacing:-.01em;margin-bottom:14px}
+  .linkbox b{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .linkbox button{margin-left:auto;flex:none;font:inherit;font-size:12px;font-weight:700;
+    border:0;background:var(--ink);color:#fff;border-radius:8px;padding:7px 11px;cursor:pointer}
+
+  .note{font-size:11.5px;color:var(--sub);letter-spacing:-.01em;margin:10px 0 0;line-height:1.6}
+  .err{font-size:12.5px;color:#C0392B;letter-spacing:-.02em;margin:10px 0 0;min-height:17px}
+
+  .foot{margin:14px 4px 0;font-size:11px;line-height:1.7;color:var(--sub);letter-spacing:-.01em}
+  .foot b{color:#4A524A}
+  .foot a{color:var(--sub)}
+  .reset{background:none;border:0;color:var(--sub);font:inherit;font-size:11px;cursor:pointer;text-decoration:underline;padding:0}
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+    .railfill{transform:translateX(-50%) scaleY(1)}
+    .stop{opacity:1;transform:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="brandbar">
+    <div class="mark">가운<i>데</i></div>
+    <div class="tagline">다 같이 애매하게 먼 곳 찾기</div>
+  </div>
+
+  <div class="phone">
+    <div class="top">
+      <div class="eyebrow" id="eyebrow">STEP 1 · 링크 만들기</div>
+      <div class="steps">
+        <div class="dot on" data-d="0"></div>
+        <div class="dot" data-d="1"></div>
+        <div class="dot" data-d="2"></div>
+      </div>
+    </div>
+
+    <!-- 1. 만드는 사람 -->
+    <section class="screen on" id="s0">
+      <h2>어디서 볼지<br><em>아직도 정하는 중</em>이면</h2>
+      <p class="lede">모임 이름만 적으면 링크가 나옵니다. 단톡방에 던지면 끝.</p>
+
+      <label class="f" for="mname">모임 이름</label>
+      <input type="text" id="mname" value="금요일 저녁 모임" autocomplete="off" maxlength="60">
+
+      <div id="made" hidden>
+        <div style="height:18px"></div>
+        <label class="f">공유 링크</label>
+        <div class="linkbox"><b id="linktext">—</b><button id="copy" type="button">복사</button></div>
+        <p class="note">이 링크를 단톡방에 보내세요. 들어온 사람은 가입 없이 출발역만 고르면 됩니다.</p>
+      </div>
+
+      <p class="err" id="err0"></p>
+      <div class="spacer"></div>
+      <button class="btn" id="make">링크 만들기</button>
+      <div id="goto1" hidden>
+        <div style="height:9px"></div>
+        <button class="btn ghost" id="mine">나도 출발역 고르기</button>
+      </div>
+    </section>
+
+    <!-- 2. 참여자 -->
+    <section class="screen" id="s1">
+      <h2 id="mtitle">모임</h2>
+      <p class="lede">이름과 출발할 역만 고르면 됩니다. 가입 없음, 5초.</p>
+
+      <label class="f" for="pname">내 이름</label>
+      <input type="text" id="pname" placeholder="단톡방에서 쓰는 이름" autocomplete="off" maxlength="20">
+
+      <div style="height:14px"></div>
+      <label class="f" for="dep">내 출발역</label>
+      <div class="ac-wrap">
+        <input type="text" id="dep" placeholder="역 이름 검색" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false">
+        <div class="ac" id="ac" role="listbox"></div>
+      </div>
+      <div class="chips" id="quick"></div>
+
+      <div class="roster">
+        <div class="rhead"><b>참여 현황</b><span id="cnt">불러오는 중…</span></div>
+        <div id="rows"></div>
+      </div>
+
+      <p class="err" id="err1"></p>
+      <div class="spacer"></div>
+      <button class="btn alt" id="submit" disabled>출발역 등록하기</button>
+      <div style="height:9px"></div>
+      <button class="btn ghost" id="toresult" disabled>결과 보기</button>
+    </section>
+
+    <!-- 3. 결과 -->
+    <section class="screen" id="s2">
+      <h2 id="rtitle">계산하는 중</h2>
+      <p class="lede" id="rlede">…</p>
+
+      <div class="map" id="rmap">
+        <div class="rail"></div><div class="railfill"></div>
+      </div>
+
+      <div class="verdict" id="verdict"></div>
+
+      <div class="alts" id="alts" hidden>
+        <div class="rhead"><b>다른 후보</b><span>최대 소요시간 기준</span></div>
+        <div id="altrows"></div>
+      </div>
+
+      <p class="err" id="err2"></p>
+      <div class="spacer"></div>
+      <button class="btn alt" id="share">결과 링크 공유하기</button>
+      <div style="height:9px"></div>
+      <button class="btn ghost" id="again">참여 현황으로 돌아가기</button>
+    </section>
+  </div>
+
+  <p class="foot">
+    <b>소요시간 계산</b> — 수도권 전철 노선도를 그래프로 만들어 각역정차 기준으로 직접 계산합니다.
+    1~8호선 서울교통공사 운영구간은 공표 실측 소요시간, 나머지는 역간거리 기반 추정치입니다.
+    <span id="cov"></span>
+    <a href="https://github.com/JakesSong/gaunde" target="_blank" rel="noopener">데이터 출처·계산 방식</a>
+    <button class="reset" id="reset2">처음으로</button>
+  </p>
+</div>
+
+<script src="./config.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
