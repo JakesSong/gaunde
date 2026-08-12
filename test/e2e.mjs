@@ -172,5 +172,29 @@ const footer = text(lastWin, 'cov');
 check('데이터 커버리지 각주', /실측 \d+%/.test(footer), footer);
 
 /* ================================================================= */
+log('\n■ 측정 이벤트 — 공유 버튼');
+const before = await fetch(`${BASE}/api/stats`).then((r) => r.json());
+click(lastWin, 'share');
+await sleep(500);
+const after = await fetch(`${BASE}/api/stats`).then((r) => r.json());
+check('share_clicked 기록됨',
+  after.events.share_clicked === before.events.share_clicked + 1,
+  `${before.events.share_clicked} → ${after.events.share_clicked}`);
+
+log('\n■ 이벤트 4종이 모두 쌓였는지');
+for (const ev of ['room_created', 'origin_submitted', 'result_viewed', 'share_clicked']) {
+  check(`${ev}`, after.events[ev] > 0, String(after.events[ev]) + '건');
+}
+
+log('\n■ /api/stats KPI');
+log('        ' + JSON.stringify(after.kpi));
+after.funnel.forEach((f) => log(`        ${f.step.padEnd(12)} ${String(f.meetings).padStart(3)}개  ${f.percentOfLinks}%`));
+check('KPI 분모 = 생성된 링크 수', after.kpi.links >= 1);
+check('3명 이상 모임이 전체 모임 수를 넘지 않음', after.kpi.roomsWith3Plus <= after.kpi.links);
+check('퍼널이 단조 감소', after.funnel.every((f, i, a) => i === 0 || f.meetings <= a[i - 1].meetings),
+  after.funnel.map((f) => f.meetings).join(' ≥ '));
+check('이번 모임이 3명 이상으로 집계됨', after.kpi.roomsWith3Plus >= 1);
+
+/* ================================================================= */
 log(failures === 0 ? '\n✅ end-to-end 전 과정 통과' : `\n❌ 실패 ${failures}건`);
 process.exit(failures === 0 ? 0 : 1);

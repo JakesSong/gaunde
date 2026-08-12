@@ -171,10 +171,39 @@ render.yaml                 Render Blueprint
 | `POST /api/meetings/:token/participants` | 출발역 등록 (같은 이름이면 덮어쓰기) |
 | `DELETE /api/meetings/:token/participants/:id` | 참여 취소 |
 | `GET /api/meetings/:token/result` | 중간지점 계산 |
+| `POST /api/track` | 프런트에서만 아는 이벤트 수집 (fire-and-forget, 항상 204) |
+| `GET /api/stats` | KPI·퍼널 집계 |
 
 ---
 
-## 4. 배포
+## 5. 측정
+
+**KPI = 생성된 링크 중 참여자 3명 이상 모인 비율 (목표 30%)**
+
+외부 분석 도구 없이 `events` 테이블에만 쌓는다. 테이블은 서버 부팅 시 자동 생성되므로
+Supabase 에서 SQL 을 따로 돌릴 필요가 없다.
+
+| 이벤트 | 기록 지점 | 용도 |
+|---|---|---|
+| `room_created` | `POST /api/meetings` (서버) | KPI 분모 |
+| `origin_submitted` | `POST /api/meetings/:token/participants` (서버) | 참여자 수 |
+| `result_viewed` | `GET /api/meetings/:token/result` 성공 시 (서버) | 완주율 |
+| `share_clicked` | 결과 화면 공유 버튼 → `POST /api/track` (프런트) | 의도 |
+
+남기는 건 무슨 일이 언제 어느 모임에서 일어났는지 뿐이다.
+**IP·User-Agent·쿠키·기기 식별자는 저장하지 않고**, `meta` 에도 역 이름과 카운트만 들어간다
+(참여자 이름은 `participants` 에 이미 있고 집계에 쓸 일이 없어 넣지 않는다).
+
+```bash
+curl -s https://<주소>/api/stats | jq .kpi
+```
+
+`events` 는 이벤트 총계, `funnel` 은 모임 중복을 제거한 단계별 수를 낸다
+(결과 화면은 새로고침하면 또 기록되므로 총계는 부풀 수 있다).
+
+---
+
+## 6. 배포
 
 프런트는 GitHub Pages, 백엔드는 Render, DB는 Supabase.
 자세한 절차는 **[DEPLOY.md](DEPLOY.md)** 에 있다.

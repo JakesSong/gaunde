@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MetroGraph, normalizeName } from './graph.mjs';
-import { openStore } from './db.mjs';
+import { openStore, TRACKED_EVENTS } from './db.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT || 3000);
@@ -61,6 +61,24 @@ function clean(str, maxLen) {
   return String(str ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, maxLen);
 }
 
+/* ------------------------------------------------------------------ 측정 이벤트
+ *
+ * KPI = 생성된 링크 중 참여자 3명 이상 모인 비율 (목표 30%)
+ *
+ * 외부 분석 도구 없이 DB(events)에만 쌓는다.
+ * 저장하는 건 무슨 일이 언제 어느 모임에서 일어났는지 뿐이다.
+ * IP·User-Agent·쿠키·기기 식별자는 남기지 않는다.
+ * 이벤트 이름 목록은 집계 쪽과 어긋나면 안 되므로 db.mjs 에서 가져온다. */
+
+/** 기록 실패가 사용자 요청을 망치지 않게 삼킨다. 측정은 기능보다 뒤다. */
+async function track(event, meeting, meta) {
+  try {
+    await store.logEvent(event, meeting?.id ?? null, meeting?.token ?? null, meta ?? null);
+  } catch (e) {
+    console.error('[track]', event, e.message);
+  }
+}
+
 /** 이름이나 id 로 역을 찾는다. 동명이역이면 후보를 함께 돌려준다. */
 function resolveStation(input) {
   if (input === null || input === undefined || input === '') return { error: '출발역을 입력해 주세요.' };
@@ -93,6 +111,7 @@ app.get('/api/stations', (req, res) => {
 app.post('/api/meetings', rateLimit(20, 60_000), asyncRoute(async (req, res) => {
   const name = clean(req.body?.name, 60) || '이름 없는 모임';
   const meeting = await store.createMeeting(name);
+  await track('room_created', meeting);
   res.status(201).json(shapeMeeting(meeting, []));
 }));
 
@@ -122,7 +141,14 @@ app.post('/api/meetings/:token/participants', rateLimit(60, 60_000), asyncRoute(
     return res.status(400).json({ error: '한 모임에는 30명까지 참여할 수 있습니다.' });
   }
 
+  const alreadyJoined = existing.some((x) => x.name === name);
   const p = await store.upsertParticipant(meeting.id, name, resolved.station.name, resolved.station.id);
+  // meta 에는 역 이름만 남긴다. 참여자 이름은 participants 에 이미 있고 집계에 쓸 일이 없다.
+  await track('origin_submitted', meeting, {
+    station: resolved.station.name,
+    changed: alreadyJoined,                       // 최초 등록인지 출발역 변경인지
+    participantCount: existing.length + (alreadyJoined ? 0 : 1),
+  });
   res.status(201).json({ participant: shapeParticipant(p) });
 }));
 
@@ -176,6 +202,13 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     })).sort((a, b) => b.min - a.min),
   });
 
+  // 결과가 실제로 나온 경우에만 기록한다 (참여자 2명 미만이면 위에서 이미 400 으로 빠진다).
+  await track('result_viewed', meeting, {
+    participants: participants.length,
+    station: result.best.station.name,
+    maxMin: Math.round(result.best.maxSec / 60),
+  });
+
   res.json({
     meeting: shapeMeeting(meeting, participants),
     best: shapeSpot(result.best),
@@ -183,6 +216,25 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     /** 가장 불리한 사람이 "누군가의 집 앞"으로 갈 때의 최대 소요시간 — 절감 효과 문구용 */
     worstIfSomeonesHomeMin: Math.round(result.worstPairwiseSec / 60),
   });
+}));
+
+/** 프런트에서만 알 수 있는 이벤트(공유 버튼 클릭 등)를 받는다.
+ *  fire-and-forget 이므로 늘 204 로 답하고, 알 수 없는 이벤트는 조용히 버린다. */
+app.post('/api/track', rateLimit(120, 60_000), asyncRoute(async (req, res) => {
+  const event = clean(req.body?.event, 40);
+  const token = clean(req.body?.token, 40);
+  if (!TRACKED_EVENTS.includes(event)) return res.status(204).end();
+
+  const meeting = token ? await store.getMeetingByToken(token) : null;
+  await track(event, meeting, { source: 'client' });
+  res.status(204).end();
+}));
+
+/** KPI 한 방 조회 — 집계만 나가므로 개인정보는 포함되지 않는다.
+ *    curl -s https://<주소>/api/stats | jq .kpi     */
+app.get('/api/stats', asyncRoute(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await store.getStats());
 }));
 
 /* ------------------------------------------------------------------ 응답 정형화 */

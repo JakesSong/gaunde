@@ -47,7 +47,39 @@ class SqliteStore {
       CREATE UNIQUE INDEX IF NOT EXISTS participants_meeting_name
         ON participants(meeting_id, name);
       CREATE INDEX IF NOT EXISTS participants_meeting ON participants(meeting_id);
+      CREATE TABLE IF NOT EXISTS events (
+        id            TEXT PRIMARY KEY,
+        event         TEXT NOT NULL,
+        meeting_id    TEXT,
+        meeting_token TEXT,
+        meta          TEXT,
+        created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
+      CREATE INDEX IF NOT EXISTS events_event   ON events(event);
+      CREATE INDEX IF NOT EXISTS events_meeting ON events(meeting_id);
+      CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
     `);
+  }
+
+  async logEvent(event, meetingId, meetingToken, meta) {
+    this.db.prepare(
+      'INSERT INTO events (id, event, meeting_id, meeting_token, meta) VALUES (?, ?, ?, ?, ?)',
+    ).run(crypto.randomUUID(), event, meetingId ?? null, meetingToken ?? null, meta ? JSON.stringify(meta) : null);
+  }
+
+  async getStats() {
+    const one = (sql) => Number(Object.values(this.db.prepare(sql).get())[0]);
+    const rows = (sql) => this.db.prepare(sql).all();
+    return shapeStats({
+      links: one('SELECT COUNT(*) AS c FROM meetings'),
+      eventRows: rows('SELECT event, COUNT(*) AS c FROM events GROUP BY event'),
+      sizeRows: rows(`SELECT n, COUNT(*) AS c FROM
+        (SELECT meeting_id, COUNT(*) AS n FROM participants GROUP BY meeting_id) GROUP BY n`),
+      reachedResult: one(
+        "SELECT COUNT(DISTINCT meeting_id) AS c FROM events WHERE event = 'result_viewed' AND meeting_id IS NOT NULL"),
+      shared: one(
+        "SELECT COUNT(DISTINCT meeting_id) AS c FROM events WHERE event = 'share_clicked' AND meeting_id IS NOT NULL"),
+    });
   }
 
   async createMeeting(name) {
@@ -140,7 +172,52 @@ class PostgresStore {
       CREATE UNIQUE INDEX IF NOT EXISTS participants_meeting_name
         ON participants(meeting_id, name);
       CREATE INDEX IF NOT EXISTS participants_meeting ON participants(meeting_id);
+      CREATE TABLE IF NOT EXISTS events (
+        id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        event         text NOT NULL,
+        -- 모임이 지워져도 집계는 남아야 하므로 CASCADE 가 아니라 SET NULL
+        meeting_id    uuid REFERENCES meetings(id) ON DELETE SET NULL,
+        meeting_token text,
+        meta          jsonb,
+        created_at    timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS events_event   ON events(event);
+      CREATE INDEX IF NOT EXISTS events_meeting ON events(meeting_id);
+      CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
     `);
+    // RLS 는 supabase/schema.sql 과 동일하게. 백엔드는 테이블 소유자로 붙으므로 영향받지 않고,
+    // anon 키로는 아무것도 못 읽는 상태가 된다. ALTER 는 멱등이라 매 부팅 실행해도 안전하다.
+    await this.pool.query(`
+      ALTER TABLE meetings     ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE participants ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE events       ENABLE ROW LEVEL SECURITY;
+    `);
+  }
+
+  async logEvent(event, meetingId, meetingToken, meta) {
+    await this.pool.query(
+      'INSERT INTO events (event, meeting_id, meeting_token, meta) VALUES ($1, $2, $3, $4)',
+      [event, meetingId ?? null, meetingToken ?? null, meta ? JSON.stringify(meta) : null],
+    );
+  }
+
+  async getStats() {
+    const q = (sql) => this.pool.query(sql).then((r) => r.rows);
+    const [meet, eventRows, sizeRows, reached, shared] = await Promise.all([
+      q('SELECT COUNT(*)::int AS c FROM meetings'),
+      q('SELECT event, COUNT(*)::int AS c FROM events GROUP BY event'),
+      q(`SELECT n, COUNT(*)::int AS c FROM
+         (SELECT meeting_id, COUNT(*)::int AS n FROM participants GROUP BY meeting_id) s GROUP BY n`),
+      q("SELECT COUNT(DISTINCT meeting_id)::int AS c FROM events WHERE event = 'result_viewed' AND meeting_id IS NOT NULL"),
+      q("SELECT COUNT(DISTINCT meeting_id)::int AS c FROM events WHERE event = 'share_clicked' AND meeting_id IS NOT NULL"),
+    ]);
+    return shapeStats({
+      links: meet[0].c,
+      eventRows,
+      sizeRows,
+      reachedResult: reached[0].c,
+      shared: shared[0].c,
+    });
   }
 
   async createMeeting(name) {
@@ -190,6 +267,53 @@ class PostgresStore {
   }
 
   async close() { await this.pool.end(); }
+}
+
+/* ------------------------------------------------------------------ KPI 집계
+ * 두 저장소가 각자 방언으로 뽑은 원시 집계를 같은 모양으로 다듬는다.
+ *
+ * KPI = 생성된 링크 중 참여자 3명 이상 모인 비율 (목표 30%)
+ *
+ * 이벤트 총계와 "모임 단위" 퍼널을 나눠서 낸다.
+ * 결과 화면은 새로고침하면 또 기록되므로 총계는 부풀 수 있고, 퍼널은 모임 중복을 제거한다. */
+const KPI_TARGET_PERCENT = 30;
+export const TRACKED_EVENTS = ['room_created', 'origin_submitted', 'result_viewed', 'share_clicked'];
+
+function shapeStats({ links, eventRows, sizeRows, reachedResult, shared }) {
+  const events = Object.fromEntries(TRACKED_EVENTS.map((e) => [e, 0]));
+  for (const r of eventRows) events[r.event] = Number(r.c);
+
+  const histogram = {};
+  let withAny = 0, with3Plus = 0;
+  for (const r of sizeRows) {
+    const n = Number(r.n), c = Number(r.c);
+    histogram[n] = c;
+    withAny += c;
+    if (n >= 3) with3Plus += c;
+  }
+
+  const pct = (x) => (links ? +((x / links) * 100).toFixed(1) : 0);
+
+  return {
+    kpi: {
+      name: '생성된 링크 중 참여자 3명 이상 모인 비율',
+      links,
+      roomsWith3Plus: with3Plus,
+      ratioPercent: pct(with3Plus),
+      targetPercent: KPI_TARGET_PERCENT,
+      metTarget: pct(with3Plus) >= KPI_TARGET_PERCENT,
+    },
+    funnel: [
+      { step: '링크 생성',        meetings: links,        percentOfLinks: pct(links) },
+      { step: '참여자 1명 이상',   meetings: withAny,      percentOfLinks: pct(withAny) },
+      { step: '참여자 3명 이상',   meetings: with3Plus,    percentOfLinks: pct(with3Plus) },
+      { step: '결과 도달',        meetings: reachedResult, percentOfLinks: pct(reachedResult) },
+      { step: '공유 클릭',        meetings: shared,        percentOfLinks: pct(shared) },
+    ],
+    events,
+    participantsHistogram: histogram,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 /* ------------------------------------------------------------------ 팩토리 */
