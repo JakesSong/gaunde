@@ -36,6 +36,19 @@
         });
       });
   }
+  /** 측정 이벤트. 실패해도 UX 를 막지 않는다 — 보내고 잊는다. */
+  function track(event) {
+    try {
+      var body = JSON.stringify({ event: event, token: state.token });
+      // 공유 직후 페이지를 떠나도 전송되도록 sendBeacon 을 먼저 시도한다.
+      if (navigator.sendBeacon && navigator.sendBeacon(API + '/api/track', new Blob([body], { type: 'application/json' }))) return;
+      fetch(API + '/api/track', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: body, keepalive: true,
+      }).catch(function () {});
+    } catch (e) { /* 측정은 기능보다 뒤다 */ }
+  }
+
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -315,6 +328,7 @@
 
   $('share').addEventListener('click', function () {
     var btn = this;
+    track('share_clicked');
     var url = location.origin + location.pathname + '?m=' + state.token;
     var text = (state.meeting ? state.meeting.name : '모임') + ' 중간지점 결과';
     if (navigator.share) {
