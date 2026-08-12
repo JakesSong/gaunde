@@ -1,0 +1,690 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-08-12T02:32:15Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "relation",
+  "id": 7533582,
+  "members": [
+    {
+      "type": "node",
+      "ref": 9459739630,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739631,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739632,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739634,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739635,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739636,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739637,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739639,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739641,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739646,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739647,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739653,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 9459739656,
+      "role": "stop"
+    },
+    {
+      "type": "way",
+      "ref": 1026020335,
+      "role": ""
+    },
+    {
+      "type": "way",
+      "ref": 1026020324,
+      "role": ""
+    },
+    {
+      "type": "way",
+      "ref": 1026020329,
+      "role": ""
+    }
+  ],
+  "tags": {
+    "colour": "#BACC50",
+    "from": "북한산우이",
+    "name": "우이신설선: 북한산우이 → 신설동",
+    "name:en": "Ui-Sinseol Line: Bukhansan Ui → Sinseol-dong",
+    "name:ko": "우이신설선: 북한산우이 → 신설동",
+    "official_ref": "Ui LRT",
+    "public_transport:version": "2",
+    "ref": "W",
+    "ref:source": "http://www.seoulmetro.co.kr/download/map_english.pdf",
+    "route": "light_rail",
+    "to": "신설동",
+    "type": "route",
+    "wikidata": "Q3832795",
+    "wikipedia": "en:Ui LRT"
+  }
+},
+{
+  "type": "relation",
+  "id": 7533583,
+  "members": [
+    {
+      "type": "node",
+      "ref": 5899527462,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 287323400,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 5754623761,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 4852979216,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 4852979526,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 4852989058,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 4852989066,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 4852989079,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 3888944113,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 4852984870,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 4852984874,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 4852984875,
+      "role": "stop"
+    },
+    {
+      "type": "node",
+      "ref": 4852984876,
+      "role": "stop"
+    },
+    {
+      "type": "way",
+      "ref": 1026020330,
+      "role": ""
+    },
+    {
+      "type": "way",
+      "ref": 192247534,
+      "role": ""
+    },
+    {
+      "type": "way",
+      "ref": 1026020328,
+      "role": ""
+    },
+    {
+      "type": "way",
+      "ref": 554331554,
+      "role": ""
+    },
+    {
+      "type": "way",
+      "ref": 1026020334,
+      "role": ""
+    }
+  ],
+  "tags": {
+    "colour": "#BACC50",
+    "from": "신설동",
+    "name": "우이신설선: 신설동 → 북한산우이",
+    "name:en": "Ui-Sinseol Line: Sinseol-dong → Bukhansan Ui",
+    "name:ko": "우이신설선: 신설동 → 북한산우이",
+    "official_ref": "Ui LRT",
+    "public_transport:version": "2",
+    "ref": "W",
+    "ref:source": "http://www.seoulmetro.co.kr/download/map_english.pdf",
+    "route": "light_rail",
+    "to": "북한산우이",
+    "type": "route",
+    "wikidata": "Q3832795",
+    "wikipedia": "en:Ui LRT"
+  }
+},
+{
+  "type": "node",
+  "id": 287323400,
+  "lat": 37.5850853,
+  "lon": 127.0195389,
+  "tags": {
+    "light_rail": "yes",
+    "name:en": "Bomun",
+    "name:ja": "ポムン",
+    "name:ko": "보문",
+    "name:zh": "普门",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L12",
+    "wikidata": "Q490891"
+  }
+},
+{
+  "type": "node",
+  "id": 3888944113,
+  "lat": 37.6340617,
+  "lon": 127.0175414,
+  "tags": {
+    "light_rail": "yes",
+    "name": "화계",
+    "name:en": "Hwagye",
+    "name:ja": "ファゲ(華溪)",
+    "name:ko": "화계",
+    "name:zh": "華溪",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L05",
+    "wikidata": "Q28943576"
+  }
+},
+{
+  "type": "node",
+  "id": 4852979216,
+  "lat": 37.6027635,
+  "lon": 127.0134067,
+  "tags": {
+    "light_rail": "yes",
+    "name": "정릉",
+    "name:en": "Jeongneung",
+    "name:ja": "チョンヌン(貞陵)",
+    "name:ko": "정릉",
+    "name:zh": "貞陵",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L10",
+    "wikidata": "Q28943581",
+    "wikipedia": "ko:정릉역"
+  }
+},
+{
+  "type": "node",
+  "id": 4852979526,
+  "lat": 37.6120218,
+  "lon": 127.0083344,
+  "tags": {
+    "light_rail": "yes",
+    "name": "북한산보국문",
+    "name:en": "Bukhansan Bogungmun",
+    "name:ja": "プカンサンボグンムン",
+    "name:ko": "북한산보국문",
+    "name:zh": "北漢山輔國門",
+    "public_transport": "stop_position",
+    "railway": "stop"
+  }
+},
+{
+  "type": "node",
+  "id": 4852984870,
+  "lat": 37.6420937,
+  "lon": 127.0165811,
+  "tags": {
+    "light_rail": "yes",
+    "name": "가오리",
+    "name:en": "Gaori",
+    "name:ja": "カオリ(加五里)",
+    "name:ko": "가오리",
+    "name:zh": "加五里",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L04",
+    "wikidata": "Q28943575"
+  }
+},
+{
+  "type": "node",
+  "id": 4852984874,
+  "lat": 37.6493790,
+  "lon": 127.0136969,
+  "tags": {
+    "alt_name": "덕성여대",
+    "light_rail": "yes",
+    "name": "4.19민주묘지",
+    "name:en": "April 19th National Cemetery",
+    "name:ja": "サ.イルグミンジュミョジ(4.19民主墓地)",
+    "name:ko": "4.19민주묘지",
+    "name:zh": "四一九民主墓地",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L03",
+    "wikidata": "Q28943574"
+  }
+},
+{
+  "type": "node",
+  "id": 4852984875,
+  "lat": 37.6559701,
+  "lon": 127.0132691,
+  "tags": {
+    "light_rail": "yes",
+    "name": "솔밭공원",
+    "name:en": "Solbat Park",
+    "name:ja": "ソルバッコンウォン(松林公園)",
+    "name:ko": "솔밭공원",
+    "name:zh": "松林公園",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L02",
+    "wikidata": "Q28943573"
+  }
+},
+{
+  "type": "node",
+  "id": 4852984876,
+  "lat": 37.6633908,
+  "lon": 127.0124238,
+  "tags": {
+    "light_rail": "yes",
+    "name": "북한산우이",
+    "name:en": "Bukhansan Ui",
+    "name:ja": "プカンサンウイ(北漢山牛耳)",
+    "name:ko": "북한산우이",
+    "name:zh": "北汉山牛耳",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L01",
+    "wikidata": "Q29160503"
+  }
+},
+{
+  "type": "node",
+  "id": 4852989058,
+  "lat": 37.6201309,
+  "lon": 127.0137405,
+  "tags": {
+    "light_rail": "yes",
+    "name": "솔샘",
+    "name:en": "Solsaem",
+    "name:ja": "ソルセム(松泉)",
+    "name:ko": "솔샘",
+    "name:zh": "松泉",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L08",
+    "wikidata": "Q28943579"
+  }
+},
+{
+  "type": "node",
+  "id": 4852989066,
+  "lat": 37.6211740,
+  "lon": 127.0205140,
+  "tags": {
+    "light_rail": "yes",
+    "name": "삼양사거리",
+    "name:en": "Samyang Sageori",
+    "name:ja": "サミャンサゴリ(三陽十字路口)",
+    "name:ko": "삼양사거리",
+    "name:zh": "三陽十字路口",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L07",
+    "wikidata": "Q28943578"
+  }
+},
+{
+  "type": "node",
+  "id": 4852989079,
+  "lat": 37.6269761,
+  "lon": 127.0182242,
+  "tags": {
+    "light_rail": "yes",
+    "name": "삼양",
+    "name:en": "Samyang",
+    "name:ja": "サミャン(三陽)",
+    "name:ko": "삼양",
+    "name:zh": "三陽",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L06",
+    "wikidata": "Q28943577"
+  }
+},
+{
+  "type": "node",
+  "id": 5754623761,
+  "lat": 37.5925932,
+  "lon": 127.0165497,
+  "tags": {
+    "alt_name": "돈암",
+    "alt_name:en": "Donam",
+    "alt_name:ko": "돈암",
+    "light_rail": "yes",
+    "name": "성신여대입구",
+    "name:en": "Sungshin Women's University",
+    "name:ja": "誠信女子大入口",
+    "name:ko": "성신여대입구",
+    "name:ko-Kana": "ソンシンヨデイック",
+    "name:ko-Latn": "Seongsinyeodaeipguyeok",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "wikidata": "Q497982"
+  }
+},
+{
+  "type": "node",
+  "id": 5899527462,
+  "lat": 37.5760583,
+  "lon": 127.0232404,
+  "tags": {
+    "light_rail": "yes",
+    "name": "신설동",
+    "name:en": "Sinseol-dong",
+    "name:ko": "신설동",
+    "public_transport": "stop_position",
+    "railway": "stop"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739630,
+  "lat": 37.6633606,
+  "lon": 127.0123479,
+  "tags": {
+    "light_rail": "yes",
+    "name": "북한산우이",
+    "name:en": "Bukhansan Ui",
+    "name:ja": "プカンサンウイ(北漢山牛耳)",
+    "name:ko": "북한산우이",
+    "name:zh": "北汉山牛耳",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L01",
+    "wikidata": "Q29160503"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739631,
+  "lat": 37.6559343,
+  "lon": 127.0131587,
+  "tags": {
+    "light_rail": "yes",
+    "name": "솔밭공원",
+    "name:en": "Solbat Park",
+    "name:ja": "ソルバッコンウォン(松林公園)",
+    "name:ko": "솔밭공원",
+    "name:zh": "松林公園",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L02",
+    "wikidata": "Q28943573"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739632,
+  "lat": 37.6493635,
+  "lon": 127.0136521,
+  "tags": {
+    "alt_name": "덕성여대",
+    "light_rail": "yes",
+    "name": "4.19민주묘지",
+    "name:en": "April 19th National Cemetery",
+    "name:ja": "サ.イルグミンジュミョジ(4.19民主墓地)",
+    "name:ko": "4.19민주묘지",
+    "name:zh": "四一九民主墓地",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L03",
+    "wikidata": "Q28943574"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739634,
+  "lat": 37.6420351,
+  "lon": 127.0165155,
+  "tags": {
+    "light_rail": "yes",
+    "name": "가오리",
+    "name:en": "Gaori",
+    "name:ja": "カオリ(加五里)",
+    "name:ko": "가오리",
+    "name:zh": "加五里",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L04",
+    "wikidata": "Q28943575"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739635,
+  "lat": 37.6340359,
+  "lon": 127.0174308,
+  "tags": {
+    "light_rail": "yes",
+    "name": "화계",
+    "name:en": "Hwagye",
+    "name:ja": "ファゲ(華溪)",
+    "name:ko": "화계",
+    "name:zh": "華溪",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L05",
+    "wikidata": "Q28943576"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739636,
+  "lat": 37.6269639,
+  "lon": 127.0181389,
+  "tags": {
+    "light_rail": "yes",
+    "name": "삼양",
+    "name:en": "Samyang",
+    "name:ja": "サミャン(三陽)",
+    "name:ko": "삼양",
+    "name:zh": "三陽",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L06",
+    "wikidata": "Q28943577"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739637,
+  "lat": 37.6211486,
+  "lon": 127.0204838,
+  "tags": {
+    "light_rail": "yes",
+    "name": "삼양",
+    "name:en": "Samyang",
+    "name:ja": "サミャン(三陽)",
+    "name:ko": "삼양",
+    "name:zh": "三陽",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L06",
+    "wikidata": "Q28943577"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739639,
+  "lat": 37.6202204,
+  "lon": 127.0137122,
+  "tags": {
+    "light_rail": "yes",
+    "name": "솔샘",
+    "name:en": "Solsaem",
+    "name:ja": "ソルセム(松泉)",
+    "name:ko": "솔샘",
+    "name:zh": "松泉",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L08",
+    "wikidata": "Q28943579"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739641,
+  "lat": 37.6119626,
+  "lon": 127.0082576,
+  "tags": {
+    "light_rail": "yes",
+    "name": "북한산보국문",
+    "name:en": "Bukhansan Bogungmun",
+    "name:ja": "プカンサンボグンムン",
+    "name:ko": "북한산보국문",
+    "name:zh": "北漢山輔國門",
+    "public_transport": "stop_position",
+    "railway": "stop"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739646,
+  "lat": 37.6027532,
+  "lon": 127.0133380,
+  "tags": {
+    "light_rail": "yes",
+    "name": "정릉",
+    "name:en": "Jeongneung",
+    "name:ja": "チョンヌン(貞陵)",
+    "name:ko": "정릉",
+    "name:zh": "貞陵",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L10",
+    "wikidata": "Q28943581",
+    "wikipedia": "ko:정릉역"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739647,
+  "lat": 37.5925679,
+  "lon": 127.0164561,
+  "tags": {
+    "alt_name": "돈암",
+    "alt_name:en": "Donam",
+    "alt_name:ko": "돈암",
+    "light_rail": "yes",
+    "name": "성신여대입구",
+    "name:en": "Sungshin Women's University",
+    "name:ja": "誠信女子大入口",
+    "name:ko": "성신여대입구",
+    "name:ko-Kana": "ソンシンヨデイック",
+    "name:ko-Latn": "Seongsinyeodaeipguyeok",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "wikidata": "Q497982"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739653,
+  "lat": 37.5850612,
+  "lon": 127.0194667,
+  "tags": {
+    "light_rail": "yes",
+    "name:en": "Bomun",
+    "name:ja": "ポムン",
+    "name:ko": "보문",
+    "name:zh": "普门",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "ref": "L12",
+    "wikidata": "Q490891"
+  }
+},
+{
+  "type": "node",
+  "id": 9459739656,
+  "lat": 37.5760855,
+  "lon": 127.0231571,
+  "tags": {
+    "light_rail": "yes",
+    "name": "신설동",
+    "name:en": "Sinseol-dong",
+    "name:ko": "신설동",
+    "public_transport": "stop_position",
+    "railway": "stop"
+  }
+}
+
+  ]
+}

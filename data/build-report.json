@@ -1,0 +1,473 @@
+{
+  "warnings": [
+    "동명이역 분리: '신촌' → 2개 역사",
+    "동명이역 분리: '양평' → 2개 역사"
+  ],
+  "droppedRelations": [
+    {
+      "id": 4784126,
+      "name": "서울 지하철 9호선 급행: 중앙보훈병원 → 김포공항",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 6064114,
+      "name": "수인·분당선 급행: 왕십리 → 고색",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 6064115,
+      "name": "수인·분당선 급행: 고색 → 왕십리",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 8820537,
+      "name": "수도권 전철 1호선: 동인천 → 용산 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 8820538,
+      "name": "수도권 전철 1호선: 용산 → 동인천 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 9079536,
+      "name": "서울 지하철 9호선 급행: 김포공항 → 중앙보훈병원",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10565521,
+      "name": "수도권 전철 1호선: 천안 → 청량리 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10685370,
+      "name": "수도권 전철 1호선: 청량리 → 신창 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10685371,
+      "name": "수도권 전철 1호선: 신창 → 청량리 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10685419,
+      "name": "수도권 전철 1호선: 서울역 → 천안 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10685420,
+      "name": "수도권 전철 1호선: 천안 → 서울역 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10700968,
+      "name": "수도권 전철 1호선: 동두천 → 인천 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10713827,
+      "name": "수도권 전철 1호선: 천안 → 구로 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10713876,
+      "name": "수도권 전철 1호선 급행: 인천 → 동두천 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10727607,
+      "name": "수도권 전철 4호선: 불암산 → 오이도 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 10727608,
+      "name": "수도권 전철 4호선: 오이도 → 불암산 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 11651118,
+      "name": "수인·분당선 급행: 오이도 → 인천",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 11651119,
+      "name": "수인·분당선 급행: 인천 → 오이도",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 13695367,
+      "name": "수도권 전철 1호선: 용산 → 동인천 특급",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 13695368,
+      "name": "수도권 전철 1호선: 동인천 → 용산 특급",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 13738410,
+      "name": "의정부경전철: 발곡 → 차량기지임시승강장",
+      "why": "unmapped ref"
+    },
+    {
+      "id": 13738411,
+      "name": "의정부경전철: 차량기지임시승강장 → 탑석",
+      "why": "unmapped ref"
+    },
+    {
+      "id": 15044499,
+      "name": "수도권 전철 1호선: 광운대 → 동두천 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 15044580,
+      "name": "수도권 전철 1호선: 동두천 → 광운대 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 16665710,
+      "name": "수도권 전철 1호선: 부천 → 용산 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 16665711,
+      "name": "수도권 전철 1호선: 동인천 → 부천 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 16665712,
+      "name": "수도권 전철 1호선: 동인천 → 구로 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 16665713,
+      "name": "수도권 전철 1호선: 부평 → 용산 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 16665714,
+      "name": "수도권 전철 1호선: 부평 → 구로 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 16665759,
+      "name": "수도권 전철 1호선: 용산 → 부평 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 16665760,
+      "name": "수도권 전철 1호선: 구로 → 부평 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 16665761,
+      "name": "수도권 전철 1호선: 구로 → 동인천 급행",
+      "why": "express/limited-stop service"
+    },
+    {
+      "id": 16665960,
+      "name": "수도권 전철 4호선: 불암산 → 금정",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665961,
+      "name": "수도권 전철 4호선: 금정 → 오이도",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665962,
+      "name": "수도권 전철 4호선: 오이도 → 금정",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665963,
+      "name": "수도권 전철 4호선: 불암산 → 진접",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665964,
+      "name": "수도권 전철 4호선: 진접 → 당고개",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665965,
+      "name": "수도권 전철 4호선: 진접 → 서울역",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665966,
+      "name": "수도권 전철 4호선: 서울역 → 진접",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665967,
+      "name": "수도권 전철 4호선: 창동 → 사당",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665968,
+      "name": "수도권 전철 4호선: 창동 → 오이도",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665969,
+      "name": "수도권 전철 4호선: 노원 → 사당",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16665970,
+      "name": "수도권 전철 4호선: 오이도 → 노원",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16712691,
+      "name": "수도권 전철 1호선: 광운대 → 병점",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16712692,
+      "name": "수도권 전철 1호선: 서울역 → 서동탄",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16712693,
+      "name": "수도권 전철 1호선: 서울역 → 광운대",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16712694,
+      "name": "수도권 전철 1호선: 서울역 → 의정부",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16712695,
+      "name": "수도권 전철 1호선: 청량리 → 서울역",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16712696,
+      "name": "수도권 전철 1호선: 서울역 → 동묘앞",
+      "why": "stop members = 1"
+    },
+    {
+      "id": 16712697,
+      "name": "수도권 전철 1호선: 서동탄 → 서울역",
+      "why": "stop members = 1"
+    }
+  ],
+  "fixes": [
+    "이름 없는 정차 노드 5919544694 → '디지털미디어시티' (최근접 148m)",
+    "이름 없는 정차 노드 5919544691 → '홍대입구' (최근접 59m)",
+    "이름 없는 정차 노드 5919544692 → '홍대입구' (최근접 59m)",
+    "이름 없는 정차 노드 5919544693 → '디지털미디어시티' (최근접 151m)"
+  ],
+  "measuredApplied": 268,
+  "unmatchedRows": [
+    "2호선 시청→용답: 인접구간 아님(지선 경계)",
+    "2호선 신설동→도림천: 인접구간 아님(지선 경계)",
+    "5호선 하남검단산→둔촌동: 인접구간 아님(지선 경계)"
+  ],
+  "usableRelations": 181,
+  "counts": {
+    "stations": 658,
+    "edges": 785,
+    "measuredEdges": 268,
+    "modeledEdges": 517,
+    "lines": 24,
+    "measuredRatio": 0.3414
+  },
+  "model": {
+    "runFormula": "t_run_sec = (A + B * km) * speedFactor[class]",
+    "A": 24.26,
+    "B": 62.8,
+    "fitSamples": 268,
+    "fitMAEsec": 11,
+    "impliedMetroCruiseKmh": 57.3,
+    "routeFactor": 1.0442,
+    "routeFactorNote": "직선거리→선로거리 보정. 실측 역간거리/직선거리의 평균.",
+    "speedFactorClass": {
+      "metro": 1,
+      "lightrail": 1,
+      "commuter": 0.792,
+      "express": 0.786,
+      "gtx": 0.342
+    },
+    "speedFactorLine": {
+      "경춘": 0.649,
+      "경의중앙": 0.934,
+      "공항철도": 0.779,
+      "신분당": 0.792,
+      "GTX-A": 0.342
+    },
+    "speedFactorNote": "주행시간 배율. 공표 전구간 소요시간(REFERENCES)에 맞춰 보정. 노선별 값이 있으면 우선, 없으면 등급 기본값.",
+    "dwellSec": 30,
+    "dwellNote": "중간 정차역 1곳당 정차시간. 실측 주행시간 합과 공표 전구간 소요시간의 차이에서 산출.",
+    "transferWalkSec": 150,
+    "transferNote": "환승비용 = 도보 150초 + (환승할 노선 배차간격/2). 최초 승차에도 배차간격/2를 적용.",
+    "caveats": [
+      "1호선 경부/경인/경원 계통, 2호선 지선, 5호선 마천지선은 동일 노선으로 취급하여 계통 간 환승 대기를 반영하지 않는다.",
+      "급행·특급 열차는 제외하고 각역정차 기준으로만 계산한다.",
+      "GTX-A 성남역이 OSM 관계에 누락되어 있어 수서~구성 사이 정차가 반영되지 않는다.",
+      "배차간격은 평일 낮 대표값 추정치이며 시간대별 변동을 반영하지 않는다."
+    ]
+  },
+  "linesCovered": {
+    "1": {
+      "stations": 102,
+      "edges": 104,
+      "measured": 9
+    },
+    "2": {
+      "stations": 51,
+      "edges": 51,
+      "measured": 49
+    },
+    "3": {
+      "stations": 44,
+      "edges": 43,
+      "measured": 33
+    },
+    "4": {
+      "stations": 51,
+      "edges": 50,
+      "measured": 25
+    },
+    "5": {
+      "stations": 56,
+      "edges": 55,
+      "measured": 54
+    },
+    "6": {
+      "stations": 39,
+      "edges": 39,
+      "measured": 39
+    },
+    "7": {
+      "stations": 53,
+      "edges": 52,
+      "measured": 41
+    },
+    "8": {
+      "stations": 24,
+      "edges": 23,
+      "measured": 18
+    },
+    "9": {
+      "stations": 38,
+      "edges": 37,
+      "measured": 0
+    },
+    "경의중앙": {
+      "stations": 58,
+      "edges": 58,
+      "measured": 0
+    },
+    "수인분당": {
+      "stations": 63,
+      "edges": 63,
+      "measured": 0
+    },
+    "경춘": {
+      "stations": 25,
+      "edges": 24,
+      "measured": 0
+    },
+    "경강": {
+      "stations": 12,
+      "edges": 12,
+      "measured": 0
+    },
+    "서해": {
+      "stations": 21,
+      "edges": 21,
+      "measured": 0
+    },
+    "공항철도": {
+      "stations": 14,
+      "edges": 13,
+      "measured": 0
+    },
+    "신분당": {
+      "stations": 16,
+      "edges": 15,
+      "measured": 0
+    },
+    "인천1": {
+      "stations": 33,
+      "edges": 32,
+      "measured": 0
+    },
+    "인천2": {
+      "stations": 28,
+      "edges": 28,
+      "measured": 0
+    },
+    "의정부": {
+      "stations": 15,
+      "edges": 14,
+      "measured": 0
+    },
+    "용인": {
+      "stations": 15,
+      "edges": 14,
+      "measured": 0
+    },
+    "우이신설": {
+      "stations": 13,
+      "edges": 12,
+      "measured": 0
+    },
+    "신림": {
+      "stations": 11,
+      "edges": 10,
+      "measured": 0
+    },
+    "김포골드": {
+      "stations": 10,
+      "edges": 9,
+      "measured": 0
+    },
+    "GTX-A": {
+      "stations": 8,
+      "edges": 6,
+      "measured": 0
+    }
+  },
+  "references": [
+    {
+      "line": "경춘",
+      "from": "청량리",
+      "to": "춘천",
+      "minutes": 82,
+      "src": "표정속도 64km/h 공표치(나무위키 경춘선) × 실거리"
+    },
+    {
+      "line": "경의중앙",
+      "from": "문산",
+      "to": "용문",
+      "minutes": 165,
+      "src": "완행 전구간 2시간40분~3시간05분(나무위키)의 중앙값"
+    },
+    {
+      "line": "공항철도",
+      "from": "서울역",
+      "to": "인천공항1터미널",
+      "minutes": 59,
+      "src": "공항철도 일반열차 공표 소요시간"
+    },
+    {
+      "line": "신분당",
+      "from": "신사",
+      "to": "광교",
+      "minutes": 42,
+      "src": "표정속도 48.3km/h 공표치 × 실거리"
+    },
+    {
+      "line": "GTX-A",
+      "from": "운정중앙",
+      "to": "서울역",
+      "minutes": 22,
+      "src": "GTX-A 개통 공표 소요시간"
+    }
+  ]
+}

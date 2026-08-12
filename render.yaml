@@ -1,0 +1,21 @@
+# Render Blueprint — 백엔드 API
+#
+#   Render 대시보드 > New > Blueprint 에서 이 리포를 연결하면 아래 정의대로 만들어집니다.
+#   DATABASE_URL 만 수동으로 넣으면 됩니다 (Supabase > Project Settings > Database > Connection string).
+services:
+  - type: web
+    name: gaunde-api
+    runtime: node
+    plan: free
+    region: singapore          # 한국에서 가장 가까운 Render 리전
+    branch: main
+    buildCommand: npm ci
+    startCommand: node server/index.mjs
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        sync: false            # Supabase 연결 문자열 — 대시보드에서 직접 입력
+      - key: PUBLIC_BASE_URL
+        value: https://jakessong.github.io/gaunde

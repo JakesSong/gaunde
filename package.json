@@ -1,0 +1,25 @@
+{
+  "name": "gaunde",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "가운데 — 모임 중간 지점 찾기 (수도권 전철 기준)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:graph": "node scripts/build-graph.mjs",
+    "calibrate": "node scripts/calibrate-speed.mjs",
+    "test": "node --test test/*.test.mjs",
+    "start": "node server/index.mjs",
+    "dev": "node --watch server/index.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^4.22.2",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}
