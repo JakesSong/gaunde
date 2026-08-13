@@ -150,6 +150,21 @@ describe('키 취급', () => {
     assert.ok(!health.includes(encodeURIComponent(FAKE_KEY)));
   });
 
+  test('앞뒤 공백·줄바꿈은 털어낸다 (환경변수 붙여넣기 사고 방지)', () => {
+    const r = new OdsayRouter({ graph: G, store: memStore(), apiKey: `  ${FAKE_KEY}\n` });
+    assert.equal(r.apiKey, FAKE_KEY);
+    assert.equal(r.keyInfo.trimmed, true);
+    assert.equal(r.keyInfo.length, FAKE_KEY.length);
+  });
+
+  test('진단 정보에는 길이·형태만 담고 키 값은 없다', () => {
+    const r = new OdsayRouter({ graph: G, store: memStore(), apiKey: FAKE_KEY });
+    const dump = JSON.stringify(r.health);
+    assert.ok(!dump.includes(FAKE_KEY));
+    assert.equal(r.health.key.length, FAKE_KEY.length);
+    assert.equal(typeof r.health.key.urlEncodedInput, 'boolean');
+  });
+
   test('실패 로그에도 키가 남지 않는다', async () => {
     mockFetch(() => jsonRes({ error: { code: -99, msg: `bad key ${FAKE_KEY}` } }));
     const r = mk();

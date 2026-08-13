@@ -42,8 +42,17 @@ export class OdsayRouter extends GraphRouter {
 
     /* ODsay 가 발급하는 키에는 URL 인코딩이 필요한 문자가 들어간다.
      * 이미 인코딩된 키를 그대로 넣으면 URLSearchParams 가 한 번 더 인코딩해
-     * 인증이 깨진다. 인코딩된 형태로 보이면 한 번 풀어둔다. */
-    this.apiKey = decodeIfEncoded(apiKey);
+     * 인증이 깨진다. 인코딩된 형태로 보이면 한 번 풀어둔다.
+     * 대시보드에서 복사해 환경변수에 붙일 때 앞뒤 공백·줄바꿈이 딸려오는 일이 잦아 먼저 턴다. */
+    const raw = String(apiKey ?? '').trim();
+    this.apiKey = decodeIfEncoded(raw);
+    /* 진단용 — 키 값 자체는 절대 노출하지 않고 길이와 형태만 남긴다.
+     * 잘려 들어갔거나 공백이 섞인 경우를 대시보드와 대조해 찾을 수 있다. */
+    this.keyInfo = {
+      length: this.apiKey.length,
+      urlEncodedInput: raw !== this.apiKey,
+      trimmed: raw.length !== String(apiKey ?? '').length,
+    };
 
     this.stats = { calls: 0, ok: 0, failed: 0, cacheHits: 0, lastError: null, lastBody: null };
     this.liveOk = false;    // ODsay 에서 온 값이 실제로 쓰이고 있는가
@@ -68,6 +77,7 @@ export class OdsayRouter extends GraphRouter {
       lastError: this.stats.lastError,
       // 파싱이 실패했을 때 ODsay 가 실제로 뭘 줬는지. 원인을 못 좁히면 손을 못 댄다.
       lastBody: this.stats.lastBody,
+      key: this.keyInfo,
     };
   }
 
