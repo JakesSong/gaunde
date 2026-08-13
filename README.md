@@ -187,6 +187,7 @@ render.yaml                 Render Blueprint
 | | |
 |---|---|
 | `GET /api/health` | 상태 |
+| `GET /api/egress-ip` | 서버 아웃바운드 공인 IP (IP 화이트리스트 등록용) |
 | `GET /api/meta` | 데이터 출처·커버리지·모델 계수 |
 | `GET /api/stations` | 역 목록 (자동완성용) |
 | `POST /api/meetings` | 모임 생성 → 토큰 발급 |

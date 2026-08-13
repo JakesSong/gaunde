@@ -14,6 +14,7 @@ import { openStore, TRACKED_EVENTS } from './db.mjs';
 import { createRouter } from './routing/index.mjs';
 import { TOLERANCE_MIN, FARE } from './config.mjs';
 import { parseRange } from './daterange.mjs';
+import { lookupEgressIp } from './egress-ip.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT || 3000);
@@ -101,13 +102,30 @@ function resolveStation(input) {
 /* ------------------------------------------------------------------ 라우트 */
 
 /** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
-const REV = 'stats-range-5';
+const REV = 'egress-ip-6';
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, rev: REV, db: dbKind, stations: graph.stations.length,
   routing: router.name, hubs: graph.hubIds.length, toleranceMin: TOLERANCE_MIN,
   // ODsay 를 쓸 때만 붙는다. 키는 절대 싣지 않는다.
   ...(router.health ? { odsay: router.health } : {}),
+}));
+
+/**
+ * 이 서버가 밖으로 나갈 때 쓰는 공인 IP.
+ *
+ * ODsay 처럼 호출자 IP 를 화이트리스트로 받는 서비스에 등록하려고 쓴다.
+ * 캐시하지 않는다 — 인스턴스가 바뀌면 IP 도 바뀌므로 부를 때마다 확인해야
+ * 로테이션을 알아챌 수 있다. 서버 공인 IP 라 민감정보가 아니고 인증도 걸지 않는다.
+ * (헬스체크에는 넣지 않는다. 매번 외부 호출이 붙어 느려진다.)
+ */
+app.get('/api/egress-ip', rateLimit(30, 60_000), asyncRoute(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const r = await lookupEgressIp();
+  if (!r.ok) {
+    return res.status(502).json({ error: '외부 IP 확인에 실패했습니다.', tried: r.tried });
+  }
+  res.json({ ip: r.ip, source: r.source, checkedAt: r.checkedAt });
 }));
 
 /** 데이터 출처·커버리지 — 프런트 각주에 그대로 쓴다 */
