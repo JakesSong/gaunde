@@ -60,6 +60,9 @@ CLI 없이 웹 대시보드만으로 전부 가능하다. 아래는 대시보드
    | `DATABASE_URL` | 1-3 에서 복사한 Supabase 연결 문자열 |
 
    (`NODE_VERSION=22`, `PUBLIC_BASE_URL` 은 `render.yaml` 에 이미 있다)
+
+   > `ODSAY_KEY` 는 **넣지 않는다.** 어댑터가 아직 골격만이라 키가 있어도 그래프 계산으로 답한다.
+   > 나중에 ODsay 를 붙일 때 Render 대시보드에서 환경변수로 추가하면 된다.
 4. **Apply** → 빌드(`npm ci`) 후 `node server/index.mjs` 로 뜬다
 5. 배포되면 주소가 나온다: `https://gaunde-api.onrender.com` (이름이 겹치면 뒤에 접미사가 붙는다)
 6. 확인:

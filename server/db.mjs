@@ -44,9 +44,15 @@ class SqliteStore {
         station_id INTEGER NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS participants_meeting_name
-        ON participants(meeting_id, name);
       CREATE INDEX IF NOT EXISTS participants_meeting ON participants(meeting_id);
+      CREATE TABLE IF NOT EXISTS route_cache (
+        from_id    INTEGER NOT NULL,
+        to_id      INTEGER NOT NULL,
+        minutes    REAL NOT NULL,
+        fare       INTEGER,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        PRIMARY KEY (from_id, to_id)
+      );
       CREATE TABLE IF NOT EXISTS events (
         id            TEXT PRIMARY KEY,
         event         TEXT NOT NULL,
@@ -59,6 +65,41 @@ class SqliteStore {
       CREATE INDEX IF NOT EXISTS events_meeting ON events(meeting_id);
       CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
     `);
+    this.migrateParticipantIdentity();
+  }
+
+  /* 참여자 식별을 이름 → client_id 로 옮긴다. (아래 PostgresStore 에 같은 설명이 있다) */
+  migrateParticipantIdentity() {
+    const cols = this.db.prepare('PRAGMA table_info(participants)').all();
+    if (!cols.some((c) => c.name === 'client_id')) {
+      this.db.exec('ALTER TABLE participants ADD COLUMN client_id TEXT');
+    }
+    this.db.exec(`
+      DROP INDEX IF EXISTS participants_meeting_name;
+      CREATE UNIQUE INDEX IF NOT EXISTS participants_meeting_client
+        ON participants(meeting_id, client_id);
+    `);
+  }
+
+  async getRouteCache(fromId, toId, ttlDays) {
+    return this.db.prepare(
+      `SELECT minutes, fare FROM route_cache
+       WHERE from_id = ? AND to_id = ?
+         AND julianday('now') - julianday(updated_at) < ?`,
+    ).get(fromId, toId, ttlDays) ?? null;
+  }
+
+  async putRouteCache(fromId, toId, minutes, fare) {
+    this.db.prepare(
+      `INSERT INTO route_cache (from_id, to_id, minutes, fare) VALUES (?, ?, ?, ?)
+       ON CONFLICT(from_id, to_id) DO UPDATE SET
+         minutes = excluded.minutes, fare = excluded.fare,
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+    ).run(fromId, toId, minutes, fare ?? null);
+  }
+
+  async getRouteCacheCount() {
+    return Number(this.db.prepare('SELECT COUNT(*) AS c FROM route_cache').get().c);
   }
 
   async logEvent(event, meetingId, meetingToken, meta) {
@@ -106,20 +147,30 @@ class SqliteStore {
     ).all(meetingId);
   }
 
-  async upsertParticipant(meetingId, name, station, stationId) {
-    const existing = this.db.prepare(
-      'SELECT id FROM participants WHERE meeting_id = ? AND name = ?',
-    ).get(meetingId, name);
+  async upsertParticipant(meetingId, name, station, stationId, clientId) {
+    const existing = clientId
+      ? this.db.prepare('SELECT id FROM participants WHERE meeting_id = ? AND client_id = ?').get(meetingId, clientId)
+      : null;
     if (existing) {
-      this.db.prepare('UPDATE participants SET station = ?, station_id = ? WHERE id = ?')
-        .run(station, stationId, existing.id);
+      this.db.prepare('UPDATE participants SET name = ?, station = ?, station_id = ? WHERE id = ?')
+        .run(name, station, stationId, existing.id);
       return this.db.prepare('SELECT * FROM participants WHERE id = ?').get(existing.id);
     }
     const id = crypto.randomUUID();
     this.db.prepare(
-      'INSERT INTO participants (id, meeting_id, name, station, station_id) VALUES (?, ?, ?, ?, ?)',
-    ).run(id, meetingId, name, station, stationId);
+      'INSERT INTO participants (id, meeting_id, name, station, station_id, client_id) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(id, meetingId, name, station, stationId, clientId ?? null);
     return this.db.prepare('SELECT * FROM participants WHERE id = ?').get(id);
+  }
+
+  async updateParticipant(meetingId, participantId, fields) {
+    const cur = this.db.prepare('SELECT * FROM participants WHERE meeting_id = ? AND id = ?')
+      .get(meetingId, participantId);
+    if (!cur) return null;
+    this.db.prepare('UPDATE participants SET name = ?, station = ?, station_id = ? WHERE id = ?')
+      .run(fields.name ?? cur.name, fields.station ?? cur.station,
+        fields.stationId ?? cur.station_id, participantId);
+    return this.db.prepare('SELECT * FROM participants WHERE id = ?').get(participantId);
   }
 
   async deleteParticipant(meetingId, participantId) {
@@ -169,9 +220,15 @@ class PostgresStore {
         station_id integer NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now()
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS participants_meeting_name
-        ON participants(meeting_id, name);
       CREATE INDEX IF NOT EXISTS participants_meeting ON participants(meeting_id);
+      CREATE TABLE IF NOT EXISTS route_cache (
+        from_id    integer NOT NULL,
+        to_id      integer NOT NULL,
+        minutes    real NOT NULL,
+        fare       integer,
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (from_id, to_id)
+      );
       CREATE TABLE IF NOT EXISTS events (
         id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         event         text NOT NULL,
@@ -187,11 +244,49 @@ class PostgresStore {
     `);
     // RLS 는 supabase/schema.sql 과 동일하게. 백엔드는 테이블 소유자로 붙으므로 영향받지 않고,
     // anon 키로는 아무것도 못 읽는 상태가 된다. ALTER 는 멱등이라 매 부팅 실행해도 안전하다.
+    /* 참여자 식별을 이름 → client_id 로 옮긴다.
+     *
+     * 예전에는 (meeting_id, name) 이 유일키라, 이름이 같은 두 사람이 등록하면
+     * 뒤에 온 사람이 앞사람을 조용히 덮어썼다. 둘 다 201 을 받는데 참여자는 1명이 되고
+     * 결과는 "두 명 이상 필요" 로 실패했다. 같은 역에서 출발하는 일행이 이름을 대충 적을 때
+     * 특히 잘 걸렸다.
+     *
+     * 이제 기기마다 만든 client_id 로 구분한다. 이름은 그냥 표시용이라 겹쳐도 된다. */
+    await this.pool.query(`
+      ALTER TABLE participants ADD COLUMN IF NOT EXISTS client_id text;
+      DROP INDEX IF EXISTS participants_meeting_name;
+      CREATE UNIQUE INDEX IF NOT EXISTS participants_meeting_client
+        ON participants(meeting_id, client_id);
+    `);
     await this.pool.query(`
       ALTER TABLE meetings     ENABLE ROW LEVEL SECURITY;
       ALTER TABLE participants ENABLE ROW LEVEL SECURITY;
       ALTER TABLE events       ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE route_cache  ENABLE ROW LEVEL SECURITY;
     `);
+  }
+
+  async getRouteCache(fromId, toId, ttlDays) {
+    const { rows } = await this.pool.query(
+      `SELECT minutes, fare FROM route_cache
+       WHERE from_id = $1 AND to_id = $2 AND updated_at > now() - ($3 || ' days')::interval`,
+      [fromId, toId, String(ttlDays)],
+    );
+    return rows[0] ?? null;
+  }
+
+  async putRouteCache(fromId, toId, minutes, fare) {
+    await this.pool.query(
+      `INSERT INTO route_cache (from_id, to_id, minutes, fare) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (from_id, to_id)
+       DO UPDATE SET minutes = EXCLUDED.minutes, fare = EXCLUDED.fare, updated_at = now()`,
+      [fromId, toId, minutes, fare ?? null],
+    );
+  }
+
+  async getRouteCacheCount() {
+    const { rows } = await this.pool.query('SELECT COUNT(*)::int AS c FROM route_cache');
+    return rows[0].c;
   }
 
   async logEvent(event, meetingId, meetingToken, meta) {
@@ -247,16 +342,36 @@ class PostgresStore {
     return rows;
   }
 
-  async upsertParticipant(meetingId, name, station, stationId) {
+  async upsertParticipant(meetingId, name, station, stationId, clientId) {
+    if (!clientId) {
+      // client_id 없는 호출(구버전 프런트·직접 API 사용)은 그냥 새 행으로 넣는다.
+      const { rows } = await this.pool.query(
+        `INSERT INTO participants (meeting_id, name, station, station_id)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [meetingId, name, station, stationId],
+      );
+      return rows[0];
+    }
     const { rows } = await this.pool.query(
-      `INSERT INTO participants (meeting_id, name, station, station_id)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (meeting_id, name)
-       DO UPDATE SET station = EXCLUDED.station, station_id = EXCLUDED.station_id
+      `INSERT INTO participants (meeting_id, name, station, station_id, client_id)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (meeting_id, client_id)
+       DO UPDATE SET name = EXCLUDED.name, station = EXCLUDED.station, station_id = EXCLUDED.station_id
        RETURNING *`,
-      [meetingId, name, station, stationId],
+      [meetingId, name, station, stationId, clientId],
     );
     return rows[0];
+  }
+
+  async updateParticipant(meetingId, participantId, fields) {
+    const { rows } = await this.pool.query(
+      `UPDATE participants SET
+         name = COALESCE($3, name), station = COALESCE($4, station),
+         station_id = COALESCE($5, station_id)
+       WHERE meeting_id = $1 AND id = $2 RETURNING *`,
+      [meetingId, participantId, fields.name ?? null, fields.station ?? null, fields.stationId ?? null],
+    );
+    return rows[0] ?? null;
   }
 
   async deleteParticipant(meetingId, participantId) {

@@ -6,7 +6,7 @@
 
 1. 주최자가 모임 이름을 적으면 공유 링크가 나온다.
 2. 참여자는 링크로 들어와 이름과 출발역만 고른다.
-3. 전원의 소요시간 중 **최댓값이 최소가 되는 역**(minimax, 동점이면 소요시간 합계로 tie-break)을 제시한다.
+3. **가장 먼 사람이 가장 덜 걸리는 역**을 제시한다. 정확히는 아래 2단계로 고른다.
 
 소요시간은 외부 실시간 API가 아니라 **직접 만든 수도권 전철 그래프 위에서 다익스트라로 계산**한다.
 
@@ -17,7 +17,7 @@
 ```bash
 npm install
 npm run build:graph     # data/raw/* -> data/graph.json
-npm test                # 알고리즘·데이터·현실 대조 22개
+npm test                # 알고리즘·데이터·현실 대조 26개
 npm start               # http://localhost:3000
 ```
 
@@ -130,13 +130,33 @@ t_run(초) = (24.3 + 62.8 × km) × speedFactor[노선]
 
 이렇게 두면 모든 간선 비용이 음이 아니라 다익스트라가 성립한다.
 
-**중간지점 선택** — 참여자마다 다익스트라를 한 번 돌려 전 역까지의 소요시간을 얻고,
-후보 역별로 `max(참여자 소요시간)` 이 최소인 역을 고른다. 동점이면 합계가 작은 쪽.
+### 중간지점 선택
 
-### 검증 (`npm test`, 22개 통과)
+참여자마다 다익스트라를 한 번 돌려 전 역까지의 소요시간을 얻은 뒤, 두 단계로 고른다.
 
-- **알고리즘** — 다익스트라를 벨만-포드와 전 정점 대조(출발역 3곳). minimax 를 완전탐색과 대조.
-  복원한 경로의 구간 합 = 총 소요시간. 동점 tie-break 순서. 최적해 ≤ "누군가의 집 앞".
+1. 후보별 `max(참여자 소요시간)` 을 구하고 그 최솟값 `min_max` 를 찾는다.
+2. `[min_max, min_max + 톨러런스]` 안에 드는 역을 **사실상 동률**로 묶고,
+   그 안에서 **합계(=평균) 소요시간이 가장 낮은 역**을 고른다.
+   합계도 같으면 **요금이 싼 쪽**, 그래도 같으면 최댓값이 작은 쪽.
+
+순수 minimax 는 1분 차이로 순위가 뒤집혀서, 가까운 사람이 괜히 더 멀리 나가거나
+한 명만 손해 보는 결과가 나온다. 톨러런스(`config.TOLERANCE_MIN`, 기본 **4분**)는
+공평성을 지키면서 그 노이즈를 걷어낸다. **0 으로 두면 기존 minimax 와 정확히 같다.**
+
+**후보 역 제한** — 만나는 역은 `노선 2개 이상(환승역) + 큐레이션한 주요역 + 참여자 본인 출발역`
+으로 제한한다(658개 → 130개 + 출발역). 아무것도 없는 역에서 만나자는 결과를 막고,
+나중에 ODsay 를 붙였을 때 호출 수도 같이 줄인다. **출발역 선택은 제한하지 않는다.**
+
+### 요금
+
+수도권 통합요금(기본 1,550원 / 10km, 이후 5km당 100원, 50km 초과 8km당 100원)에
+노선별 별도운임(`lines[].extraFare` — 신분당선·GTX-A)을 더한 **근사치**다.
+정확한 금액이 목적이 아니라 동률일 때 싼 쪽을 가르는 게 목적이다.
+
+### 검증 (`npm test`, 26개 통과)
+
+- **알고리즘** — 다익스트라를 벨만-포드와 전 정점 대조(출발역 3곳). 톨러런스 0 일 때 완전탐색 minimax 와 일치. 동률 밴드·평균 tie-break·후보 제한.
+  복원한 경로의 구간 합 = 총 소요시간. 최적해 ≤ "누군가의 집 앞". 같은 역 참여자(2·3·5명) 회귀.
 - **데이터** — 658개 역 전부 서울역에서 도달 가능(고립역 0). 주요 환승역 10곳의 노선 구성.
   동명이역 분리. 같은 노선 내 역명 중복 없음.
 - **현실 대조** — 보정에 쓰지 않은 8개 구간을 실제 통행시간과 ±25% 이내로 대조.
@@ -149,7 +169,10 @@ t_run(초) = (24.3 + 62.8 × km) × speedFactor[노선]
 ```
 scripts/build-graph.mjs     원본 -> data/graph.json  (재현 가능한 단일 파이프라인)
 scripts/calibrate-speed.mjs 공표 소요시간에 speedFactor 를 맞추는 보정기
-server/graph.mjs            그래프·다익스트라·minimax  (의존성 없음)
+server/config.mjs           톨러런스·후보역·요금 등 손으로 만지는 값
+server/graph.mjs            그래프·다익스트라·중간지점 선택  (의존성 없음)
+server/fare.mjs             요금 근사
+server/routing/             라우팅 어댑터 (기본=그래프, ODSAY_KEY 있으면 ODsay)
 server/db.mjs               저장소 (DATABASE_URL 있으면 Postgres, 없으면 SQLite)
 server/index.mjs            Express API
 public/                     프런트 (목업 디자인 계승, 빌드 도구 없음)
@@ -168,7 +191,8 @@ render.yaml                 Render Blueprint
 | `GET /api/stations` | 역 목록 (자동완성용) |
 | `POST /api/meetings` | 모임 생성 → 토큰 발급 |
 | `GET /api/meetings/:token` | 모임 + 참여현황 |
-| `POST /api/meetings/:token/participants` | 출발역 등록 (같은 이름이면 덮어쓰기) |
+| `POST /api/meetings/:token/participants` | 출발역 등록 (같은 기기면 덮어쓰기) |
+| `PATCH /api/meetings/:token/participants/:id` | 등록 내용 수정 |
 | `DELETE /api/meetings/:token/participants/:id` | 참여 취소 |
 | `GET /api/meetings/:token/result` | 중간지점 계산 |
 | `POST /api/track` | 프런트에서만 아는 이벤트 수집 (fire-and-forget, 항상 204) |
@@ -203,7 +227,27 @@ curl -s https://<주소>/api/stats | jq .kpi
 
 ---
 
-## 6. 배포
+## 6. 라우팅 어댑터
+
+소요시간·요금 계산은 어댑터 뒤에 있다.
+
+| | |
+|---|---|
+| 기본 | `subway-graph` — 자체 전철 그래프. 무료, 한도 없음, 버스 미포함 |
+| `ODSAY_KEY` 있을 때 | `odsay` — 버스 포함·실제 요금 (**아직 골격만**) |
+
+지금은 인터페이스·캐시 스키마·스텁까지만 있고 **실제 ODsay 호출은 하지 않는다.**
+키가 없으면 관련 코드는 한 줄도 돌지 않는다.
+
+무료 티어 한도 때문에 역쌍 결과는 `route_cache(from_id, to_id, minutes, fare, updated_at)` 에
+캐싱한다. 역 좌표는 고정이라 오래 유효하다. 후보를 환승역으로 줄여둔 것도 같은 이유다
+(참여자 5명 × 후보 130개 = 650회를 캐시로 흡수한다).
+
+키를 꽂은 뒤 할 일은 `server/routing/odsay-router.mjs` 맨 위 주석에 적어두었다.
+
+---
+
+## 7. 배포
 
 프런트는 GitHub Pages, 백엔드는 Render, DB는 Supabase.
 자세한 절차는 **[DEPLOY.md](DEPLOY.md)** 에 있다.

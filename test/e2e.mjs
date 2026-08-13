@@ -152,7 +152,7 @@ await sleep(700);
 
 check('STEP 3 로 이동', visible(lastWin, 2), text(lastWin, 'eyebrow'));
 const title = text(lastWin, 'rtitle');
-check('제목에 최대 소요시간', /다 같이 \d+분/.test(title), title);
+check('제목에 최대 소요시간', /가장 먼 사람도 \d+분/.test(title), title);
 
 const hit = lastWin.document.querySelector('#rmap .stop.hit .who');
 check('중간지점 역 표시', !!hit && hit.textContent.length > 0, hit && hit.textContent);
@@ -172,8 +172,67 @@ const footer = text(lastWin, 'cov');
 check('데이터 커버리지 각주', /실측 \d+%/.test(footer), footer);
 
 /* ================================================================= */
+log('\n■ 결과 화면 개편 확인');
+check('문구가 "가장 먼 사람도 N분"', /가장 먼 사람도 \d+분/.test(title), title);
+check('평균·요금 표기', /평균 \d+분 · 1인 [\d,]+원/.test(text(lastWin, 'rlede')), text(lastWin, 'rlede'));
+const foodHref = decodeURIComponent(lastWin.document.getElementById('food').href);
+const cafeHref = decodeURIComponent(lastWin.document.getElementById('cafe').href);
+check('맛집·카페 버튼이 카카오맵으로', /map\.kakao\.com\/\?q=.+맛집$/.test(foodHref) && /카페$/.test(cafeHref),
+  foodHref + ' / ' + cafeHref);
+check('맛집 링크가 새 탭으로', lastWin.document.getElementById('food').target === '_blank');
+check('세로 간격이 소요시간에 비례',
+  [...lastWin.document.querySelectorAll('#rmap .stop:not(.hit)')].some((s) => /margin-(top|bottom):\s*\d+px/.test(s.getAttribute('style') || '')));
+
+const altBtns = [...lastWin.document.querySelectorAll('#altrows .altrow')];
+check('후보 목록이 버튼으로 렌더', altBtns.length >= 2, altBtns.length + '개');
+check('첫 후보가 선택 상태', altBtns[0].classList.contains('on'));
+const beforeHit = lastWin.document.querySelector('#rmap .stop.hit .who').textContent;
+altBtns[1].dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
+await sleep(200);
+const afterHit = lastWin.document.querySelector('#rmap .stop.hit .who').textContent;
+check('다른 후보 클릭 → 그 역 기준으로 재계산 표시', beforeHit !== afterHit, `${beforeHit} → ${afterHit}`);
+check('선택 표시가 옮겨감', altBtns[1].classList.contains('on') && !altBtns[0].classList.contains('on'));
+altBtns[0].dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
+await sleep(150);
+
+/* ================================================================= */
+log('\n■ 같은 역 참여자 병합 + 수정/삭제');
+{
+  // 같은 역에서 출발하는 두 명을 추가로 넣어 한 줄로 묶이는지 본다
+  for (const n of ['동현', '유진']) {
+    await fetch(`${BASE}/api/meetings/${token}/participants`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: n, station: '사당', clientId: 'cid-' + n }),
+    });
+  }
+  const page2 = await openPage('?m=' + token + '&r=1');
+  await sleep(1200);
+  const w = page2.window;
+  check('딥링크 ?r=1 → 결과 화면 바로', visible(w, 2), text(w, 'eyebrow'));
+
+  const rows2 = [...w.document.querySelectorAll('#rmap .stop:not(.hit)')].map((s) => s.textContent.replace(/\s+/g, ' ').trim());
+  rows2.forEach((s) => log('        · ' + s));
+  const sadang = rows2.filter((r) => r.includes('사당'));
+  check('사당 출발 3명이 한 줄로 병합', sadang.length === 1, sadang.join(' | '));
+  check('병합된 줄에 이름이 함께 표기', /지현·동현·유진|동현|유진/.test(sadang[0] || ''), sadang[0]);
+}
+{
+  const w = (await openPage('?m=' + token)).window;
+  await sleep(400);
+  const before = w.document.querySelectorAll('#rows .row').length;
+  const delBtn = w.document.querySelector('#rows .row .tool[data-act="del"]');
+  check('로스터에 수정/삭제 버튼', !!delBtn && !!w.document.querySelector('#rows .tool[data-act="edit"]'));
+  w.confirm = () => true;
+  delBtn.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await sleep(500);
+  const after = w.document.querySelectorAll('#rows .row').length;
+  check('삭제가 반영됨', after === before - 1, `${before}명 → ${after}명`);
+}
+
+/* ================================================================= */
 log('\n■ 측정 이벤트 — 공유 버튼');
 const before = await fetch(`${BASE}/api/stats`).then((r) => r.json());
+// jsdom 에는 canvas 가 없어 html2canvas 가 안 돈다 → 링크 복사 폴백 경로를 탄다.
 click(lastWin, 'share');
 await sleep(500);
 const after = await fetch(`${BASE}/api/stats`).then((r) => r.json());

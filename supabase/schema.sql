@@ -17,11 +17,15 @@ create table if not exists participants (
   name       text not null,
   station    text not null,          -- 역 이름 (표시용, 그래프 재빌드에도 살아남는 값)
   station_id integer not null,       -- 그래프 역 id (빠른 조회용 캐시)
+  client_id  text,                   -- 기기별 식별자. 사람을 가리는 건 이름이 아니라 이것.
   created_at timestamptz not null default now()
 );
 
-create unique index if not exists participants_meeting_name on participants(meeting_id, name);
-create index        if not exists participants_meeting      on participants(meeting_id);
+-- 이름이 아니라 client_id 로 사람을 구분한다.
+-- 예전에는 (meeting_id, name) 이 유일키라, 이름이 겹치는 두 사람이 등록하면
+-- 뒤에 온 사람이 앞사람을 조용히 덮어써서 "참여자가 2명 미만" 으로 결과가 실패했다.
+create unique index if not exists participants_meeting_client on participants(meeting_id, client_id);
+create index        if not exists participants_meeting        on participants(meeting_id);
 
 -- ---------------------------------------------------------------- 측정 이벤트
 -- KPI = 생성된 링크 중 참여자 3명 이상 모인 비율 (목표 30%)
@@ -46,6 +50,19 @@ create index if not exists events_event   on events(event);
 create index if not exists events_meeting on events(meeting_id);
 create index if not exists events_created on events(created_at);
 
+-- ---------------------------------------------------------------- 라우팅 캐시
+-- ODsay 어댑터를 붙였을 때 역쌍 길찾기 결과를 담아둔다.
+-- 역 좌표는 고정이라 오래 유효하고, 무료 티어 호출 한도를 이걸로 흡수한다.
+-- (아직 실제 호출은 하지 않으므로 지금은 항상 비어 있다)
+create table if not exists route_cache (
+  from_id    integer not null,
+  to_id      integer not null,
+  minutes    real not null,
+  fare       integer,
+  updated_at timestamptz not null default now(),
+  primary key (from_id, to_id)
+);
+
 -- ---------------------------------------------------------------- RLS
 -- 이 앱은 브라우저에서 Supabase 를 직접 부르지 않는다.
 -- 모든 접근은 연결 문자열을 쥔 백엔드(Render)를 거치므로
@@ -53,6 +70,7 @@ create index if not exists events_created on events(created_at);
 alter table meetings     enable row level security;
 alter table participants enable row level security;
 alter table events       enable row level security;
+alter table route_cache  enable row level security;
 -- (정책을 만들지 않으면 anon 키로는 아무것도 읽거나 쓸 수 없다 = 의도된 상태)
 
 -- ---------------------------------------------------------------- 정리

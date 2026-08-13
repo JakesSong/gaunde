@@ -80,28 +80,97 @@ describe('A. 알고리즘 정확성', () => {
     }
   });
 
-  test('minimax 선택이 완전탐색 결과와 일치', () => {
-    const origins = ['강남', '노원', '인천'].map(sid);
-    const got = G.findMeetingPoint(origins);
+  test('톨러런스 0 이면 기존 minimax(완전탐색)와 같다', () => {
+    const all = G.stations.map((s) => s.id);
+    for (const names of [['강남', '노원', '인천'], ['수원', '홍대입구'], ['춘천', '광교', '사당']]) {
+      const origins = names.map(sid);
+      const got = G.findMeetingPoint(origins, { toleranceMin: 0, candidates: all });
 
-    const results = origins.map((o) => G.dijkstra(o));
-    let best = null;
-    for (const s of G.stations) {
-      const ts = results.map((r) => r.stationTime[s.id]);
-      if (ts.some((t) => t >= 0x7fffffff)) continue;
-      const max = Math.max(...ts), sum = ts.reduce((x, y) => x + y, 0);
-      if (!best || max < best.max || (max === best.max && sum < best.sum)) best = { id: s.id, max, sum };
+      const results = origins.map((o) => G.dijkstra(o));
+      let best = null;
+      for (const s of G.stations) {
+        const ts = results.map((r) => r.stationTime[s.id]);
+        if (ts.some((t) => t >= 0x7fffffff)) continue;
+        const max = Math.max(...ts), sum = ts.reduce((x, y) => x + y, 0);
+        if (!best || max < best.max || (max === best.max && sum < best.sum)) best = { id: s.id, max, sum };
+      }
+      assert.equal(got.best.maxSec, best.max, names.join(','));
+      assert.equal(got.best.sumSec, best.sum, names.join(','));
     }
-    assert.equal(got.best.station.id, best.id);
-    assert.equal(got.best.maxSec, best.max);
-    assert.equal(got.best.sumSec, best.sum);
   });
 
+  test('동률 밴드: 밴드 정의와 평균 tie-break 가 정확하다', () => {
+    const TOL = 4;
+    for (const names of [['홍대입구', '잠실', '노원', '사당', '강남'], ['수원', '의정부', '인천'], ['부평', '노원']]) {
+      const origins = names.map(sid);
+      const got = G.findMeetingPoint(origins, { toleranceMin: TOL, topN: 400 });
+
+      // 밴드 = max 가 [min_max, min_max + 톨러런스] 안인 후보
+      const results = origins.map((o) => G.dijkstra(o));
+      const pool = [...new Set([...G.hubIds, ...origins])];
+      const scored = pool.map((id) => {
+        const ts = results.map((r) => r.stationTime[id]);
+        if (ts.some((t) => t >= 0x7fffffff)) return null;
+        return { id, max: Math.max(...ts), sum: ts.reduce((x, y) => x + y, 0) };
+      }).filter(Boolean);
+
+      const minMax = Math.min(...scored.map((s) => s.max));
+      const band = scored.filter((s) => s.max <= minMax + TOL * 60);
+      const bestSum = Math.min(...band.map((s) => s.sum));
+
+      assert.equal(got.selection.minMaxSec, minMax, `${names}: min_max`);
+      assert.equal(got.selection.bandSize, band.length, `${names}: 밴드 크기`);
+      assert.equal(got.best.sumSec, bestSum, `${names}: 밴드 안 최소 합계가 선택되어야 함`);
+      assert.ok(got.best.maxSec <= minMax + TOL * 60, `${names}: 선택된 역이 밴드 밖`);
+      assert.ok(got.best.inBand);
+    }
+  });
+
+  test('밴드·합계가 같으면 요금이 싼 쪽을 고른다', () => {
+    // 인위적으로 동점을 만들 수 없으므로 정렬 규칙 자체를 확인한다.
+    const origins = ['강남', '노원', '인천'].map(sid);
+    const r = G.findMeetingPoint(origins, { toleranceMin: 30, topN: 400 });
+    const band = [r.best, ...r.alternatives].filter((x) => x.inBand);
+    for (let i = 1; i < band.length; i++) {
+      const a = band[i - 1], b = band[i];
+      const ordered = a.sumSec < b.sumSec
+        || (a.sumSec === b.sumSec && a.fareTotal <= b.fareTotal);
+      assert.ok(ordered, `밴드 정렬 위반: ${a.station.name}(${a.sumSec}s,${a.fareTotal}원) → ${b.station.name}(${b.sumSec}s,${b.fareTotal}원)`);
+    }
+  });
+
+  test('만나는 역은 환승역이거나 참여자 출발역이다', () => {
+    const hubs = new Set(G.hubIds);
+    for (const names of [['홍대입구', '잠실', '노원'], ['수원', '의정부'], ['춘천', '오이도']]) {
+      const origins = names.map(sid);
+      const r = G.findMeetingPoint(origins);
+      assert.ok(hubs.has(r.best.station.id) || origins.includes(r.best.station.id),
+        `${names}: ${r.best.station.name} 은 환승역도 출발역도 아님`);
+    }
+  });
+
+  /* 회귀: 같은 역에서 출발하는 참여자들 */
   test('참여자가 모두 같은 역이면 그 역이 답이고 0분', () => {
-    const id = sid('건대입구');
-    const r = G.findMeetingPoint([id, id, id]);
-    assert.equal(r.best.station.id, id);
-    assert.equal(r.best.maxSec, 0);
+    // 환승역 / 단일노선역 / 종점 / 경전철 — 후보 제한에 걸려도 답이 나와야 한다
+    for (const name of ['건대입구', '신답', '오이도', '전대·에버랜드', '춘천']) {
+      const id = sid(name);
+      for (const n of [2, 3, 5]) {
+        const r = G.findMeetingPoint(Array(n).fill(id));
+        assert.ok(r, `${name} × ${n}명: 결과 없음`);
+        assert.equal(r.best.station.id, id, `${name} × ${n}명`);
+        assert.equal(r.best.maxSec, 0);
+        assert.equal(r.best.fareTotal, 0, '안 움직이면 요금 0');
+        assert.ok(r.best.routes.every((x) => x.path && x.path.legs.length === 0));
+      }
+    }
+  });
+
+  test('일부만 같은 역이어도 정상 계산된다', () => {
+    const a = sid('강남'), b = sid('노원');
+    const r = G.findMeetingPoint([a, a, b]);
+    assert.ok(r);
+    assert.equal(r.best.routes.length, 3);
+    assert.equal(r.best.routes[0].sec, r.best.routes[1].sec, '같은 역 두 명은 소요시간이 같아야');
   });
 
   test('동점일 때 소요시간 합계로 tie-break 한다', () => {

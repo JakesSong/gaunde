@@ -11,6 +11,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MetroGraph, normalizeName } from './graph.mjs';
 import { openStore, TRACKED_EVENTS } from './db.mjs';
+import { createRouter } from './routing/index.mjs';
+import { TOLERANCE_MIN, FARE } from './config.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT || 3000);
@@ -24,6 +26,7 @@ if (!fs.existsSync(graphPath)) {
 }
 const graph = new MetroGraph(JSON.parse(fs.readFileSync(graphPath, 'utf8')));
 const { store, kind: dbKind } = await openStore();
+const router = await createRouter({ graph, store });
 
 /* 자동완성용 역 목록은 요청마다 만들 필요가 없다 */
 const stationIndex = graph.stations.map((s) => ({
@@ -96,7 +99,10 @@ function resolveStation(input) {
 
 /* ------------------------------------------------------------------ 라우트 */
 
-app.get('/api/health', (req, res) => res.json({ ok: true, db: dbKind, stations: graph.stations.length }));
+app.get('/api/health', (req, res) => res.json({
+  ok: true, db: dbKind, stations: graph.stations.length,
+  routing: router.name, hubs: graph.hubIds.length, toleranceMin: TOLERANCE_MIN,
+}));
 
 /** 데이터 출처·커버리지 — 프런트 각주에 그대로 쓴다 */
 app.get('/api/meta', (req, res) => res.json(graph.meta));
@@ -141,8 +147,11 @@ app.post('/api/meetings/:token/participants', rateLimit(60, 60_000), asyncRoute(
     return res.status(400).json({ error: '한 모임에는 30명까지 참여할 수 있습니다.' });
   }
 
-  const alreadyJoined = existing.some((x) => x.name === name);
-  const p = await store.upsertParticipant(meeting.id, name, resolved.station.name, resolved.station.id);
+  const clientId = clean(req.body?.clientId, 64) || null;
+  const alreadyJoined = clientId ? existing.some((x) => x.client_id === clientId) : false;
+  const p = await store.upsertParticipant(
+    meeting.id, name, resolved.station.name, resolved.station.id, clientId,
+  );
   // meta 에는 역 이름만 남긴다. 참여자 이름은 participants 에 이미 있고 집계에 쓸 일이 없다.
   await track('origin_submitted', meeting, {
     station: resolved.station.name,
@@ -150,6 +159,33 @@ app.post('/api/meetings/:token/participants', rateLimit(60, 60_000), asyncRoute(
     participantCount: existing.length + (alreadyJoined ? 0 : 1),
   });
   res.status(201).json({ participant: shapeParticipant(p) });
+}));
+
+/** 등록한 내용 고치기 — 링크를 아는 사람이면 누구나 할 수 있다(단톡방 도구라 그게 맞다). */
+app.patch('/api/meetings/:token/participants/:id', rateLimit(60, 60_000), asyncRoute(async (req, res) => {
+  const meeting = await store.getMeetingByToken(req.params.token);
+  if (!meeting) return res.status(404).json({ error: '없는 모임입니다.' });
+
+  const fields = {};
+  if (req.body?.name !== undefined) {
+    const name = clean(req.body.name, 20);
+    if (!name) return res.status(400).json({ error: '이름을 입력해 주세요.' });
+    fields.name = name;
+  }
+  if (req.body?.station !== undefined || req.body?.stationId !== undefined) {
+    const resolved = resolveStation(req.body.stationId ?? req.body.station);
+    if (resolved.error) return res.status(400).json({ error: resolved.error });
+    if (resolved.ambiguous && req.body.stationId === undefined) {
+      return res.status(409).json({ error: '같은 이름의 역이 여러 개입니다. 하나를 골라 주세요.', candidates: resolved.ambiguous });
+    }
+    fields.station = resolved.station.name;
+    fields.stationId = resolved.station.id;
+  }
+  if (!Object.keys(fields).length) return res.status(400).json({ error: '바꿀 내용이 없습니다.' });
+
+  const p = await store.updateParticipant(meeting.id, req.params.id, fields);
+  if (!p) return res.status(404).json({ error: '없는 참여자입니다.' });
+  res.json({ participant: shapeParticipant(p) });
 }));
 
 app.delete('/api/meetings/:token/participants/:id', rateLimit(60, 60_000), asyncRoute(async (req, res) => {
@@ -180,7 +216,7 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     return res.status(500).json({ error: '등록된 역 중 현재 노선도에 없는 역이 있습니다.' });
   }
 
-  const result = graph.findMeetingPoint(originIds, { topN: 6 });
+  const result = await router.findMeetingPoint(originIds, { topN: 6 });
   if (!result) return res.status(500).json({ error: '중간지점을 계산하지 못했습니다.' });
 
   const shapeSpot = (spot) => ({
@@ -188,11 +224,17 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     maxMin: Math.round(spot.maxSec / 60),
     avgMin: Math.round(spot.avgSec / 60),
     totalMin: Math.round(spot.sumSec / 60),
+    fareAvg: spot.fareAvg,
+    fareTotal: spot.fareTotal,
+    inBand: spot.inBand,
     routes: spot.routes.map((r, i) => ({
       participantId: participants[i].id,
       name: participants[i].name,
       origin: r.origin,
+      originId: r.originId,
       min: Math.round(r.sec / 60),
+      fare: r.fare,
+      surcharges: r.surcharges,
       transfers: r.path?.transfers ?? 0,
       estimated: !!r.path?.legs.some((l) => l.hasEstimate),
       legs: (r.path?.legs ?? []).map((l) => ({
@@ -212,7 +254,10 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
   res.json({
     meeting: shapeMeeting(meeting, participants),
     best: shapeSpot(result.best),
+    /** 프런트에서 후보를 눌러 바로 전환할 수 있게 경로까지 통째로 내려준다 */
     alternatives: result.alternatives.map(shapeSpot),
+    /** 어떻게 골랐는지 — 화면 각주와 디버깅용 */
+    selection: { ...result.selection, routing: router.name, fareApprox: FARE.approx },
     /** 가장 불리한 사람이 "누군가의 집 앞"으로 갈 때의 최대 소요시간 — 절감 효과 문구용 */
     worstIfSomeonesHomeMin: Math.round(result.worstPairwiseSec / 60),
   });

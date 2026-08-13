@@ -32,32 +32,34 @@ const DWELL_SEC = 30;
 
 /* ------------------------------------------------------------------ 노선 정의 */
 /* headwayMin : 평일 낮 대표 배차간격(분) — 환승·최초승차 대기(headway/2) 산출용 추정치
-   class      : 주행속도 등급 (speedFactor 적용 단위) */
+   class      : 주행속도 등급 (speedFactor 적용 단위)
+   extraFare  : 수도권 통합요금 위에 붙는 노선 별도운임(원). 근사치이며 구간별 차등은 반영하지 않는다.
+                대부분 노선은 통합요금에 포함되어 0. ODsay 어댑터를 붙이면 실제 요금으로 대체된다. */
 const LINES = {
-  '1':      { name: '1호선',       color: '#0052A4', headwayMin: 6,  class: 'commuter' },
-  '2':      { name: '2호선',       color: '#00A84D', headwayMin: 4,  class: 'metro' },
-  '3':      { name: '3호선',       color: '#EF7C1C', headwayMin: 5,  class: 'metro' },
-  '4':      { name: '4호선',       color: '#00A5DE', headwayMin: 5,  class: 'metro' },
-  '5':      { name: '5호선',       color: '#996CAC', headwayMin: 5,  class: 'metro' },
-  '6':      { name: '6호선',       color: '#CD7C2F', headwayMin: 6,  class: 'metro' },
-  '7':      { name: '7호선',       color: '#747F00', headwayMin: 5,  class: 'metro' },
-  '8':      { name: '8호선',       color: '#E6186C', headwayMin: 6,  class: 'metro' },
-  '9':      { name: '9호선',       color: '#BB8336', headwayMin: 5,  class: 'metro' },
-  '경의중앙': { name: '경의중앙선',   color: '#77C4A3', headwayMin: 14, class: 'commuter' },
-  '수인분당': { name: '수인분당선',   color: '#F5A200', headwayMin: 9,  class: 'commuter' },
-  '경춘':    { name: '경춘선',      color: '#0C8E72', headwayMin: 16, class: 'commuter' },
-  '경강':    { name: '경강선',      color: '#003DA5', headwayMin: 16, class: 'commuter' },
-  '서해':    { name: '서해선',      color: '#8FC31F', headwayMin: 14, class: 'commuter' },
-  '공항철도': { name: '공항철도',     color: '#0090D2', headwayMin: 9,  class: 'express' },
-  '신분당':   { name: '신분당선',    color: '#D4003B', headwayMin: 6,  class: 'express' },
-  '인천1':   { name: '인천1호선',   color: '#7CA8D5', headwayMin: 7,  class: 'metro' },
-  '인천2':   { name: '인천2호선',   color: '#F5A251', headwayMin: 6,  class: 'metro' },
-  '의정부':   { name: '의정부경전철', color: '#FDA600', headwayMin: 6,  class: 'lightrail' },
-  '용인':    { name: '용인경전철',   color: '#509F22', headwayMin: 6,  class: 'lightrail' },
-  '우이신설': { name: '우이신설선',   color: '#B7C452', headwayMin: 5,  class: 'lightrail' },
-  '신림':    { name: '신림선',      color: '#6789CA', headwayMin: 5,  class: 'lightrail' },
-  '김포골드': { name: '김포골드라인',  color: '#A17E46', headwayMin: 5,  class: 'lightrail' },
-  'GTX-A':  { name: 'GTX-A',      color: '#9A6292', headwayMin: 17, class: 'gtx' },
+  '1':      { name: '1호선',       color: '#0052A4', headwayMin: 6,  class: 'commuter', extraFare: 0 },
+  '2':      { name: '2호선',       color: '#00A84D', headwayMin: 4,  class: 'metro', extraFare: 0 },
+  '3':      { name: '3호선',       color: '#EF7C1C', headwayMin: 5,  class: 'metro', extraFare: 0 },
+  '4':      { name: '4호선',       color: '#00A5DE', headwayMin: 5,  class: 'metro', extraFare: 0 },
+  '5':      { name: '5호선',       color: '#996CAC', headwayMin: 5,  class: 'metro', extraFare: 0 },
+  '6':      { name: '6호선',       color: '#CD7C2F', headwayMin: 6,  class: 'metro', extraFare: 0 },
+  '7':      { name: '7호선',       color: '#747F00', headwayMin: 5,  class: 'metro', extraFare: 0 },
+  '8':      { name: '8호선',       color: '#E6186C', headwayMin: 6,  class: 'metro', extraFare: 0 },
+  '9':      { name: '9호선',       color: '#BB8336', headwayMin: 5,  class: 'metro', extraFare: 0 },
+  '경의중앙': { name: '경의중앙선',   color: '#77C4A3', headwayMin: 14, class: 'commuter', extraFare: 0 },
+  '수인분당': { name: '수인분당선',   color: '#F5A200', headwayMin: 9,  class: 'commuter', extraFare: 0 },
+  '경춘':    { name: '경춘선',      color: '#0C8E72', headwayMin: 16, class: 'commuter', extraFare: 0 },
+  '경강':    { name: '경강선',      color: '#003DA5', headwayMin: 16, class: 'commuter', extraFare: 0 },
+  '서해':    { name: '서해선',      color: '#8FC31F', headwayMin: 14, class: 'commuter', extraFare: 0 },
+  '공항철도': { name: '공항철도',     color: '#0090D2', headwayMin: 9,  class: 'express', extraFare: 0 },
+  '신분당':   { name: '신분당선',    color: '#D4003B', headwayMin: 6,  class: 'express', extraFare: 1000 },
+  '인천1':   { name: '인천1호선',   color: '#7CA8D5', headwayMin: 7,  class: 'metro', extraFare: 0 },
+  '인천2':   { name: '인천2호선',   color: '#F5A251', headwayMin: 6,  class: 'metro', extraFare: 0 },
+  '의정부':   { name: '의정부경전철', color: '#FDA600', headwayMin: 6,  class: 'lightrail', extraFare: 0 },
+  '용인':    { name: '용인경전철',   color: '#509F22', headwayMin: 6,  class: 'lightrail', extraFare: 0 },
+  '우이신설': { name: '우이신설선',   color: '#B7C452', headwayMin: 5,  class: 'lightrail', extraFare: 0 },
+  '신림':    { name: '신림선',      color: '#6789CA', headwayMin: 5,  class: 'lightrail', extraFare: 0 },
+  '김포골드': { name: '김포골드라인',  color: '#A17E46', headwayMin: 5,  class: 'lightrail', extraFare: 0 },
+  'GTX-A':  { name: 'GTX-A',      color: '#9A6292', headwayMin: 17, class: 'gtx', extraFare: 1650 },
 };
 
 /* 주행시간 배율 — 도시철도 실측으로 적합한 식 대비 얼마나 빠른가. 1.0 미만 = 더 빠름.
