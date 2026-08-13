@@ -259,6 +259,7 @@ curl -s https://<주소>/api/stats | jq .kpi
 | 특정 역쌍 실패 | 그 쌍만 그래프 값으로. `fareSource: "mixed"` |
 | ODsay 전면 장애 | 전부 그래프로. `fareSource: "estimate"`, `routing: "subway-graph (odsay-pending)"` |
 | 429 / 5xx | 지수 backoff 로 2회 재시도 후 포기 |
+| 키 인증 실패 | 그래프로 동작하고 `odsay.lastError` 에 사유를 남긴다 |
 | 좌표 없는 역 | 호출하지 않고 그래프 값 |
 
 동시 호출은 **6개**로 제한한다(429 방지). 요청당 신규 호출은 **80회**가 상한이다.
