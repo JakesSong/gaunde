@@ -94,10 +94,14 @@ describe('ODsay 응답 파싱', () => {
   test('오류 사유에 코드뿐 아니라 실제 문구까지 담는다', () => {
     // 운영에서 "odsay ?" 만 보이면 키 문제인지 좌표 문제인지 구분이 안 된다
     const cases = [
+      // 실제 ODsay 가 돌려준 모양 (error 가 배열이다)
+      [{ error: [{ code: '500', message: '[ApiKeyAuthFailed] ApiKey authentication failed.' }] },
+        /500/, /ApiKeyAuthFailed/],
       [{ error: { code: -8, msg: '필수 입력값 오류' } }, /-8/, /필수 입력값 오류/],
       [{ error: { message: 'Invalid API Key' } }, /\?/, /Invalid API Key/],
       [{ error: 'service not registered' }, /\?/, /service not registered/],
       [{ result: { error: { code: 500, msg: 'server' } } }, /500/, /server/],
+      [{ error: [] }, /no path|\?/, /.*/],
     ];
     for (const [body, codeRe, msgRe] of cases) {
       const r = parseOdsay(body);

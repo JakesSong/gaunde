@@ -316,10 +316,14 @@ export class OdsayRouter extends GraphRouter {
 export function parseOdsay(body) {
   if (!body || typeof body !== 'object') return { ok: false, reason: 'empty body' };
 
-  /* 오류는 {error:{code,msg}} 가 보통이지만 {error:"문자열"}, {result:{error:...}},
-   * message/status 같은 다른 이름으로도 온다. 코드만 찍으면 운영에서 원인을 못 찾는다.
-   * 실제 문구까지 남겨야 키 문제인지 좌표 문제인지 구분된다. */
-  const err = body.error ?? body.result?.error;
+  /* 오류 모양이 한 가지가 아니다. 실제로 관측된 것만 해도
+   *   {"error":[{"code":"500","message":"[ApiKeyAuthFailed] ..."}]}   ← 배열!
+   *   {"error":{"code":-8,"msg":"..."}}
+   *   {"result":{"error":...}}
+   * 배열을 객체로 읽으면 code 가 undefined 가 되어 "odsay ?" 만 남고 원인을 못 찾는다.
+   * 코드와 문구를 모두 뽑아야 키 문제인지 좌표 문제인지 구분된다. */
+  const errRaw = body.error ?? body.result?.error;
+  const err = Array.isArray(errRaw) ? errRaw[0] : errRaw;
   if (err) {
     const code = (typeof err === 'object' ? err.code ?? err.status ?? err.errorCode : undefined) ?? '?';
     const msg = typeof err === 'string' ? err : err.msg ?? err.message ?? err.errorMessage ?? '';
