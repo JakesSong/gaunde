@@ -102,6 +102,8 @@ function resolveStation(input) {
 app.get('/api/health', (req, res) => res.json({
   ok: true, db: dbKind, stations: graph.stations.length,
   routing: router.name, hubs: graph.hubIds.length, toleranceMin: TOLERANCE_MIN,
+  // ODsay 를 쓸 때만 붙는다. 키는 절대 싣지 않는다.
+  ...(router.health ? { odsay: router.health } : {}),
 }));
 
 /** 데이터 출처·커버리지 — 프런트 각주에 그대로 쓴다 */
@@ -235,6 +237,7 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
       min: Math.round(r.sec / 60),
       fare: r.fare,
       surcharges: r.surcharges,
+      timeSource: r.timeSource ?? 'graph',
       transfers: r.path?.transfers ?? 0,
       estimated: !!r.path?.legs.some((l) => l.hasEstimate),
       legs: (r.path?.legs ?? []).map((l) => ({
@@ -257,7 +260,12 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     /** 프런트에서 후보를 눌러 바로 전환할 수 있게 경로까지 통째로 내려준다 */
     alternatives: result.alternatives.map(shapeSpot),
     /** 어떻게 골랐는지 — 화면 각주와 디버깅용 */
-    selection: { ...result.selection, routing: router.name, fareApprox: FARE.approx },
+    selection: {
+      ...result.selection,
+      routing: router.name,
+      // ODsay 가 요금을 준 경우엔 근사치가 아니다
+      fareApprox: (result.selection.fareSource ?? 'estimate') !== 'odsay' && FARE.approx,
+    },
     /** 가장 불리한 사람이 "누군가의 집 앞"으로 갈 때의 최대 소요시간 — 절감 효과 문구용 */
     worstIfSomeonesHomeMin: Math.round(result.worstPairwiseSec / 60),
   });

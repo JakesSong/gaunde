@@ -27,6 +27,17 @@ function check(label, cond, detail) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** 조건이 참이 될 때까지 기다린다.
+ *  결과 계산은 ODsay 를 붙이면 수 초가 걸릴 수 있어 고정 대기로는 불안정하다. */
+async function waitFor(fn, { timeout = 20000, step = 150 } = {}) {
+  const until = Date.now() + timeout;
+  for (;;) {
+    try { if (fn()) return true; } catch { /* 아직 렌더 전 */ }
+    if (Date.now() > until) return false;
+    await sleep(step);
+  }
+}
+
 /** 브라우저 한 개를 띄운다 (한 명의 참여자에 해당) */
 async function openPage(search = '') {
   const vc = new VirtualConsole();
@@ -148,8 +159,8 @@ check('폴링으로 6명 반영', text(lastWin, 'cnt') === '6명 등록', text(l
 /* ================================================================= */
 log('\n■ 3단계 — 결과 화면');
 click(lastWin, 'toresult');
-await sleep(700);
-
+const rendered = await waitFor(() => /\d+분/.test(text(lastWin, 'rtitle')));
+check('결과 렌더 완료', rendered, text(lastWin, 'rtitle'));
 check('STEP 3 로 이동', visible(lastWin, 2), text(lastWin, 'eyebrow'));
 const title = text(lastWin, 'rtitle');
 check('제목에 최대 소요시간', /가장 먼 사람도 \d+분/.test(title), title);
@@ -206,8 +217,8 @@ log('\n■ 같은 역 참여자 병합 + 수정/삭제');
     });
   }
   const page2 = await openPage('?m=' + token + '&r=1');
-  await sleep(1200);
   const w = page2.window;
+  await waitFor(() => w.document.querySelectorAll('#rmap .stop').length > 1);
   check('딥링크 ?r=1 → 결과 화면 바로', visible(w, 2), text(w, 'eyebrow'));
 
   const rows2 = [...w.document.querySelectorAll('#rmap .stop:not(.hit)')].map((s) => s.textContent.replace(/\s+/g, ' ').trim());

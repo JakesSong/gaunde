@@ -385,8 +385,11 @@
     var n = d.meeting.participants.length;
 
     $('rtitle').innerHTML = '가장 먼 사람도 <em>' + spot.maxMin + '분</em>';
-    $('rlede').textContent = n + '명 평균 ' + spot.avgMin + '분 · 1인 ' + won(spot.fareAvg) +
-      (d.selection && d.selection.fareApprox ? ' (요금은 근사치)' : '');
+    var sel = d.selection || {};
+    var basis = sel.fareSource === 'odsay' ? ' (실시간 대중교통 기준)'
+      : sel.fareSource === 'mixed' ? ' (일부 실시간 기준)'
+      : (sel.fareApprox ? ' (지하철 기준, 요금은 근사치)' : '');
+    $('rlede').textContent = n + '명 평균 ' + spot.avgMin + '분 · 1인 ' + won(spot.fareAvg) + basis;
 
     /* 같은 역에서 출발하는 사람은 한 줄로 묶는다 — 위아래로 갈리면 같은 역이 두 번 나온다 */
     var groups = [];
@@ -395,7 +398,8 @@
       var k = r.originId;
       if (byStation[k] === undefined) {
         byStation[k] = groups.length;
-        groups.push({ names: [r.name], origin: r.origin, min: r.min, fare: r.fare, legs: r.legs, transfers: r.transfers });
+        groups.push({ names: [r.name], origin: r.origin, min: r.min, fare: r.fare,
+        legs: r.legs, transfers: r.transfers, timeSource: r.timeSource });
       } else {
         groups[byStation[k]].names.push(r.name);
       }
@@ -458,10 +462,14 @@
     var css = [];
     if (style.marginTop) css.push('margin-top:' + style.marginTop + 'px');
     if (style.marginBottom) css.push('margin-bottom:' + style.marginBottom + 'px');
+    // ODsay 시간은 버스가 섞였을 수 있어 지하철 노선명을 단정적으로 쓰지 않는다
+    var via = g.timeSource === 'odsay'
+      ? (uniq ? ' · 지하철 기준 ' + esc(uniq) : '')
+      : (uniq ? ' · ' + esc(uniq) : '');
     return '<div class="stop"' + (css.length ? ' style="' + css.join(';') + '"' : '') + '>' +
       '<div class="who">' + esc(g.names.join('·')) +
       '<small>' + esc(g.origin) + '</small></div><div class="node"></div>' +
-      '<div class="mins">' + g.min + '분' + (uniq ? ' · ' + esc(uniq) : '') +
+      '<div class="mins">' + g.min + '분' + via +
       (g.transfers ? ' · 환승' + g.transfers : '') +
       (g.fare ? '<br>' + won(g.fare) : '') + '</div></div>';
   }

@@ -61,16 +61,22 @@ CLI 없이 웹 대시보드만으로 전부 가능하다. 아래는 대시보드
 
    (`NODE_VERSION=22`, `PUBLIC_BASE_URL` 은 `render.yaml` 에 이미 있다)
 
-   > `ODSAY_KEY` 는 **넣지 않는다.** 어댑터가 아직 골격만이라 키가 있어도 그래프 계산으로 답한다.
-   > 나중에 ODsay 를 붙일 때 Render 대시보드에서 환경변수로 추가하면 된다.
+   > `ODSAY_KEY` 를 넣으면 버스까지 포함한 실제 소요시간·요금으로 계산한다.
+   > 없으면 지하철 그래프로 답한다. 넣은 뒤에는 헬스체크의 `routing` 이
+   > `odsay+subway` 로 바뀌는지 확인하면 된다.
+   >
+   > 키는 URL 인코딩된 형태로 발급되기도 하는데, 그대로 붙여넣어도 된다(서버가 알아서 푼다).
 4. **Apply** → 빌드(`npm ci`) 후 `node server/index.mjs` 로 뜬다
 5. 배포되면 주소가 나온다: `https://gaunde-api.onrender.com` (이름이 겹치면 뒤에 접미사가 붙는다)
 6. 확인:
    ```bash
    curl https://<실제-주소>/api/health
-   # {"ok":true,"db":"postgres","stations":658}
+   # {"ok":true,"db":"postgres","stations":658,"routing":"odsay+subway",...}
    ```
-   `"db":"postgres"` 가 나와야 Supabase 에 제대로 붙은 것이다. `sqlite` 로 나오면 `DATABASE_URL` 이 안 들어갔다.
+   - `"db":"postgres"` 가 나와야 Supabase 에 붙은 것이다. `sqlite` 면 `DATABASE_URL` 이 안 들어갔다.
+   - `ODSAY_KEY` 를 넣었다면 `"routing":"odsay+subway"` 여야 한다.
+     `"subway-graph (odsay-pending)"` 이면 키가 틀렸거나 ODsay 가 응답하지 않는 것이고,
+     이때도 지하철 그래프로 정상 동작한다. 원인은 같은 응답의 `odsay.lastError` 에 나온다.
 
 > **무료 티어 주의** — 15분간 요청이 없으면 잠들고, 다음 첫 요청이 30~50초 걸린다.
 > 수요 검증용으로는 감수할 만하지만, 링크를 뿌리기 직전에 한 번 깨워두면 첫 사용자가 덜 기다린다.
