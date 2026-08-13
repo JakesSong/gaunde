@@ -108,18 +108,30 @@ class SqliteStore {
     ).run(crypto.randomUUID(), event, meetingId ?? null, meetingToken ?? null, meta ? JSON.stringify(meta) : null);
   }
 
-  async getStats() {
-    const one = (sql) => Number(Object.values(this.db.prepare(sql).get())[0]);
-    const rows = (sql) => this.db.prepare(sql).all();
+  async getStats(range = null) {
+    const one = (sql, p = []) => Number(Object.values(this.db.prepare(sql).get(...p))[0]);
+    const rows = (sql, p = []) => this.db.prepare(sql).all(...p);
+
+    /* created_at 은 ISO-8601 UTC 문자열이라 사전순 비교가 곧 시간순 비교다. */
+    const win = (col) => (range ? ` ${col} >= ? AND ${col} < ?` : ' 1=1');
+    const p = range ? [range.fromIso ?? '', range.toIso ?? '9999'] : [];
+
     return shapeStats({
-      links: one('SELECT COUNT(*) AS c FROM meetings'),
-      eventRows: rows('SELECT event, COUNT(*) AS c FROM events GROUP BY event'),
-      sizeRows: rows(`SELECT n, COUNT(*) AS c FROM
-        (SELECT meeting_id, COUNT(*) AS n FROM participants GROUP BY meeting_id) GROUP BY n`),
-      reachedResult: one(
-        "SELECT COUNT(DISTINCT meeting_id) AS c FROM events WHERE event = 'result_viewed' AND meeting_id IS NOT NULL"),
-      shared: one(
-        "SELECT COUNT(DISTINCT meeting_id) AS c FROM events WHERE event = 'share_clicked' AND meeting_id IS NOT NULL"),
+      range,
+      links: one(`SELECT COUNT(*) AS c FROM meetings WHERE${win('created_at')}`, p),
+      // 이벤트는 "그 기간에 일어난 것" 기준
+      eventRows: rows(`SELECT event, COUNT(*) AS c FROM events WHERE${win('created_at')} GROUP BY event`, p),
+      // 코호트(그 기간에 만들어진 모임) 기준 — 참여자가 다음 날 들어와도 그 모임의 성과로 친다
+      sizeRows: rows(`SELECT n, COUNT(*) AS c FROM (
+          SELECT p.meeting_id, COUNT(*) AS n FROM participants p
+          JOIN meetings m ON m.id = p.meeting_id
+          WHERE${win('m.created_at')} GROUP BY p.meeting_id) GROUP BY n`, p),
+      reachedResult: one(`SELECT COUNT(DISTINCT e.meeting_id) AS c FROM events e
+          JOIN meetings m ON m.id = e.meeting_id
+          WHERE e.event = 'result_viewed' AND${win('m.created_at')}`, p),
+      shared: one(`SELECT COUNT(DISTINCT e.meeting_id) AS c FROM events e
+          JOIN meetings m ON m.id = e.meeting_id
+          WHERE e.event = 'share_clicked' AND${win('m.created_at')}`, p),
     });
   }
 
@@ -296,17 +308,31 @@ class PostgresStore {
     );
   }
 
-  async getStats() {
-    const q = (sql) => this.pool.query(sql).then((r) => r.rows);
+  async getStats(range = null) {
+    const q = (sql, p = []) => this.pool.query(sql, p).then((r) => r.rows);
+
+    /* 범위가 없으면 항상 참인 조건을 넣어 쿼리 모양을 하나로 유지한다 */
+    const win = (col) => (range ? ` ${col} >= $1::timestamptz AND ${col} < $2::timestamptz` : ' true');
+    const p = range ? [range.fromIso ?? '-infinity', range.toIso ?? 'infinity'] : [];
+
     const [meet, eventRows, sizeRows, reached, shared] = await Promise.all([
-      q('SELECT COUNT(*)::int AS c FROM meetings'),
-      q('SELECT event, COUNT(*)::int AS c FROM events GROUP BY event'),
-      q(`SELECT n, COUNT(*)::int AS c FROM
-         (SELECT meeting_id, COUNT(*)::int AS n FROM participants GROUP BY meeting_id) s GROUP BY n`),
-      q("SELECT COUNT(DISTINCT meeting_id)::int AS c FROM events WHERE event = 'result_viewed' AND meeting_id IS NOT NULL"),
-      q("SELECT COUNT(DISTINCT meeting_id)::int AS c FROM events WHERE event = 'share_clicked' AND meeting_id IS NOT NULL"),
+      q(`SELECT COUNT(*)::int AS c FROM meetings WHERE${win('created_at')}`, p),
+      // 이벤트는 "그 기간에 일어난 것" 기준
+      q(`SELECT event, COUNT(*)::int AS c FROM events WHERE${win('created_at')} GROUP BY event`, p),
+      // 코호트(그 기간에 만들어진 모임) 기준
+      q(`SELECT n, COUNT(*)::int AS c FROM (
+           SELECT p.meeting_id, COUNT(*)::int AS n FROM participants p
+           JOIN meetings m ON m.id = p.meeting_id
+           WHERE${win('m.created_at')} GROUP BY p.meeting_id) s GROUP BY n`, p),
+      q(`SELECT COUNT(DISTINCT e.meeting_id)::int AS c FROM events e
+         JOIN meetings m ON m.id = e.meeting_id
+         WHERE e.event = 'result_viewed' AND${win('m.created_at')}`, p),
+      q(`SELECT COUNT(DISTINCT e.meeting_id)::int AS c FROM events e
+         JOIN meetings m ON m.id = e.meeting_id
+         WHERE e.event = 'share_clicked' AND${win('m.created_at')}`, p),
     ]);
     return shapeStats({
+      range,
       links: meet[0].c,
       eventRows,
       sizeRows,
@@ -394,7 +420,7 @@ class PostgresStore {
 const KPI_TARGET_PERCENT = 30;
 export const TRACKED_EVENTS = ['room_created', 'origin_submitted', 'result_viewed', 'share_clicked'];
 
-function shapeStats({ links, eventRows, sizeRows, reachedResult, shared }) {
+function shapeStats({ range, links, eventRows, sizeRows, reachedResult, shared }) {
   const events = Object.fromEntries(TRACKED_EVENTS.map((e) => [e, 0]));
   for (const r of eventRows) events[r.event] = Number(r.c);
 
@@ -410,6 +436,14 @@ function shapeStats({ links, eventRows, sizeRows, reachedResult, shared }) {
   const pct = (x) => (links ? +((x / links) * 100).toFixed(1) : 0);
 
   return {
+    /* 어느 구간을 본 건지. 없으면 전체 기간.
+     * kpi·funnel·참여자 분포는 "그 기간에 만들어진 모임" 코호트 기준이고,
+     * events 는 "그 기간에 일어난 이벤트" 기준이다. 둘을 섞으면 퍼널이 100%를 넘는다. */
+    range: range
+      ? { from: range.from, to: range.to, tz: range.tz, toExclusive: range.toExclusive,
+          fromUtc: range.fromIso, toUtc: range.toIso,
+          basis: { kpi: 'meetings.created_at', funnel: 'meetings.created_at', events: 'events.created_at' } }
+      : null,
     kpi: {
       name: '생성된 링크 중 참여자 3명 이상 모인 비율',
       links,

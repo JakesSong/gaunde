@@ -13,6 +13,7 @@ import { MetroGraph, normalizeName } from './graph.mjs';
 import { openStore, TRACKED_EVENTS } from './db.mjs';
 import { createRouter } from './routing/index.mjs';
 import { TOLERANCE_MIN, FARE } from './config.mjs';
+import { parseRange } from './daterange.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT || 3000);
@@ -100,7 +101,7 @@ function resolveStation(input) {
 /* ------------------------------------------------------------------ 라우트 */
 
 /** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
-const REV = 'odsay-keydiag-4';
+const REV = 'stats-range-5';
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, rev: REV, db: dbKind, stations: graph.stations.length,
@@ -287,10 +288,17 @@ app.post('/api/track', rateLimit(120, 60_000), asyncRoute(async (req, res) => {
 }));
 
 /** KPI 한 방 조회 — 집계만 나가므로 개인정보는 포함되지 않는다.
- *    curl -s https://<주소>/api/stats | jq .kpi     */
+ *
+ *   curl -s https://<주소>/api/stats | jq .kpi
+ *
+ * 날짜로 좁히려면 from/to 를 준다. 한국 날짜 기준이고 to 는 exclusive 다.
+ *   ?from=2026-08-13&to=2026-08-14   → KST 8/13 하루
+ */
 app.get('/api/stats', asyncRoute(async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(await store.getStats());
+  const { range, error } = parseRange({ from: req.query.from, to: req.query.to });
+  if (error) return res.status(400).json({ error });
+  res.json(await store.getStats(range));
 }));
 
 /* ------------------------------------------------------------------ 응답 정형화 */

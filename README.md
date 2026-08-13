@@ -196,7 +196,7 @@ render.yaml                 Render Blueprint
 | `DELETE /api/meetings/:token/participants/:id` | 참여 취소 |
 | `GET /api/meetings/:token/result` | 중간지점 계산 |
 | `POST /api/track` | 프런트에서만 아는 이벤트 수집 (fire-and-forget, 항상 204) |
-| `GET /api/stats` | KPI·퍼널 집계 |
+| `GET /api/stats` | KPI·퍼널 집계 (`?from=&to=` 로 기간 필터) |
 
 ---
 
@@ -220,10 +220,34 @@ Supabase 에서 SQL 을 따로 돌릴 필요가 없다.
 
 ```bash
 curl -s https://<주소>/api/stats | jq .kpi
+
+# 한국 날짜 기준 하루만 (to 는 exclusive)
+curl -s 'https://<주소>/api/stats?from=2026-08-13&to=2026-08-14' | jq '.range, .kpi'
 ```
 
 `events` 는 이벤트 총계, `funnel` 은 모임 중복을 제거한 단계별 수를 낸다
 (결과 화면은 새로고침하면 또 기록되므로 총계는 부풀 수 있다).
+
+### 기간 필터
+
+`from` / `to` 는 **한국 날짜**(`YYYY-MM-DD`)이고 **`to` 는 exclusive** 다 — `[from, to)`.
+하루만 보려면 `to` 를 다음 날로 준다. 한쪽만 줘도 되고, 둘 다 없으면 전체 기간이다.
+형식이 틀리거나 `to <= from` 이면 400 을 낸다(빈 결과를 조용히 돌려주면 오해하기 쉬워서다).
+
+`created_at` 은 UTC 로 저장되므로 KST 자정은 전날 UTC 15:00 이다. 응답의 `range` 에
+해석한 실제 UTC 경계를 함께 실어 확인할 수 있게 했다.
+
+```json
+"range": {
+  "from": "2026-08-13", "to": "2026-08-14", "tz": "Asia/Seoul", "toExclusive": true,
+  "fromUtc": "2026-08-12T15:00:00.000Z", "toUtc": "2026-08-13T15:00:00.000Z",
+  "basis": { "kpi": "meetings.created_at", "funnel": "meetings.created_at", "events": "events.created_at" }
+}
+```
+
+기준이 둘로 갈리는 게 의도다. **KPI·퍼널·참여자 분포는 "그 기간에 만들어진 모임" 코호트**라
+23:50 에 만든 링크에 친구가 다음 날 00:10 에 들어와도 그 모임의 성과로 친다.
+**`events` 는 "그 기간에 일어난 이벤트"** 다. 둘을 섞으면 퍼널이 100%를 넘는다.
 
 ---
 
