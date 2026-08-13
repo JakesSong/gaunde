@@ -91,6 +91,28 @@ describe('ODsay 응답 파싱', () => {
     }
   });
 
+  test('오류 사유에 코드뿐 아니라 실제 문구까지 담는다', () => {
+    // 운영에서 "odsay ?" 만 보이면 키 문제인지 좌표 문제인지 구분이 안 된다
+    const cases = [
+      [{ error: { code: -8, msg: '필수 입력값 오류' } }, /-8/, /필수 입력값 오류/],
+      [{ error: { message: 'Invalid API Key' } }, /\?/, /Invalid API Key/],
+      [{ error: 'service not registered' }, /\?/, /service not registered/],
+      [{ result: { error: { code: 500, msg: 'server' } } }, /500/, /server/],
+    ];
+    for (const [body, codeRe, msgRe] of cases) {
+      const r = parseOdsay(body);
+      assert.equal(r.ok, false);
+      assert.match(r.reason, codeRe, JSON.stringify(body));
+      assert.match(r.reason, msgRe, JSON.stringify(body));
+    }
+  });
+
+  test('응답 모양이 예상과 다르면 최상위 키를 사유에 남긴다', () => {
+    const r = parseOdsay({ weird: 1, other: 2 });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /keys: weird,other/);
+  });
+
   test('요금이 없거나 이상하면 null 로 두고 시간은 살린다', () => {
     for (const payment of [undefined, null, 'x', -1, NaN]) {
       const r = parseOdsay({ result: { path: [{ info: { totalTime: 30, payment } }] } });

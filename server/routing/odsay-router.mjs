@@ -311,12 +311,22 @@ export class OdsayRouter extends GraphRouter {
 export function parseOdsay(body) {
   if (!body || typeof body !== 'object') return { ok: false, reason: 'empty body' };
 
-  // 오류는 {error:{code,msg}} 또는 {result:{error:...}} 로 온다
-  const err = body.error || body.result?.error;
-  if (err) return { ok: false, reason: `odsay ${err.code ?? '?'}` };
+  /* 오류는 {error:{code,msg}} 가 보통이지만 {error:"문자열"}, {result:{error:...}},
+   * message/status 같은 다른 이름으로도 온다. 코드만 찍으면 운영에서 원인을 못 찾는다.
+   * 실제 문구까지 남겨야 키 문제인지 좌표 문제인지 구분된다. */
+  const err = body.error ?? body.result?.error;
+  if (err) {
+    const code = (typeof err === 'object' ? err.code ?? err.status ?? err.errorCode : undefined) ?? '?';
+    const msg = typeof err === 'string' ? err : err.msg ?? err.message ?? err.errorMessage ?? '';
+    return { ok: false, reason: `odsay ${code}${msg ? ': ' + msg : ''}` };
+  }
 
   const paths = body.result?.path;
-  if (!Array.isArray(paths) || !paths.length) return { ok: false, reason: 'no path' };
+  if (!Array.isArray(paths) || !paths.length) {
+    // 응답 모양 자체가 예상과 다르면 최상위 키라도 남겨 단서를 만든다
+    const keys = Object.keys(body).slice(0, 6).join(',');
+    return { ok: false, reason: Array.isArray(paths) ? 'no path (empty)' : `no path (keys: ${keys || 'none'})` };
+  }
 
   let best = null;
   for (const p of paths) {
@@ -354,5 +364,5 @@ export function scrub(text, key) {
   for (const form of [key, encodeURIComponent(key ?? '')]) {
     if (form && form.length > 4) out = out.split(form).join('***');
   }
-  return out.replace(/apiKey=[^&\s]+/gi, 'apiKey=***').slice(0, 200);
+  return out.replace(/apiKey=[^&\s]+/gi, 'apiKey=***').slice(0, 300);
 }
