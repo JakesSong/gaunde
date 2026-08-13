@@ -99,8 +99,11 @@ function resolveStation(input) {
 
 /* ------------------------------------------------------------------ 라우트 */
 
+/** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
+const REV = 'odsay-diag-2';
+
 app.get('/api/health', (req, res) => res.json({
-  ok: true, db: dbKind, stations: graph.stations.length,
+  ok: true, rev: REV, db: dbKind, stations: graph.stations.length,
   routing: router.name, hubs: graph.hubIds.length, toleranceMin: TOLERANCE_MIN,
   // ODsay 를 쓸 때만 붙는다. 키는 절대 싣지 않는다.
   ...(router.health ? { odsay: router.health } : {}),

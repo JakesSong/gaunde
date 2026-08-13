@@ -45,7 +45,7 @@ export class OdsayRouter extends GraphRouter {
      * 인증이 깨진다. 인코딩된 형태로 보이면 한 번 풀어둔다. */
     this.apiKey = decodeIfEncoded(apiKey);
 
-    this.stats = { calls: 0, ok: 0, failed: 0, cacheHits: 0, lastError: null };
+    this.stats = { calls: 0, ok: 0, failed: 0, cacheHits: 0, lastError: null, lastBody: null };
     this.liveOk = false;    // ODsay 에서 온 값이 실제로 쓰이고 있는가
   }
 
@@ -66,6 +66,8 @@ export class OdsayRouter extends GraphRouter {
       failed: this.stats.failed,
       cacheHits: this.stats.cacheHits,
       lastError: this.stats.lastError,
+      // 파싱이 실패했을 때 ODsay 가 실제로 뭘 줬는지. 원인을 못 좁히면 손을 못 댄다.
+      lastBody: this.stats.lastBody,
     };
   }
 
@@ -159,7 +161,10 @@ export class OdsayRouter extends GraphRouter {
 
         const body = await res.json();
         const parsed = parseOdsay(body);
-        if (!parsed.ok) return this.fail(parsed.reason);
+        if (!parsed.ok) {
+          this.stats.lastBody = scrub(safeJson(body), this.apiKey);
+          return this.fail(parsed.reason);
+        }
 
         this.stats.ok++;
         this.liveOk = true;
@@ -345,6 +350,11 @@ export function parseOdsay(body) {
       pathType: best.pathType ?? best.info.pathType ?? null,
     },
   };
+}
+
+/** 응답을 로그에 남길 수 있는 짧은 문자열로 (순환참조·과대 응답 방어) */
+function safeJson(body) {
+  try { return JSON.stringify(body).slice(0, 300); } catch { return String(body).slice(0, 300); }
 }
 
 function hasCoords(s) {
