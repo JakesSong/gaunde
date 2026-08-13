@@ -54,7 +54,7 @@ export class OdsayRouter extends GraphRouter {
       trimmed: raw.length !== String(apiKey ?? '').length,
     };
 
-    this.stats = { calls: 0, ok: 0, failed: 0, cacheHits: 0, throttled: 0, lastError: null, lastBody: null };
+    this.stats = { calls: 0, ok: 0, failed: 0, cacheHits: 0, throttled: 0, failStreak: 0, lastError: null, lastBody: null };
     this.liveOk = false;    // ODsay 에서 온 값이 실제로 쓰이고 있는가
     this.nextSlot = 0;      // 다음 호출을 보낼 수 있는 가장 이른 시각 (전체 공유)
     /* 기본 간격. 테스트에서만 낮춰 쓰라고 열어둔다 — 운영에서는 config 값을 그대로 쓴다. */
@@ -63,7 +63,15 @@ export class OdsayRouter extends GraphRouter {
     this.okStreak = 0;
   }
 
-  get name() { return this.liveOk ? 'odsay+subway' : 'subway-graph (odsay-pending)'; }
+  /** 실호출이 연달아 깨지고 있으면 정상인 척하지 않는다.
+   *  캐시에 예전 결과가 남아 있어도, 지금 인증이 끊겼으면 그렇게 보여야 한다.
+   *  (IP 화이트리스트를 쓰면 재배포 때 서버 IP 가 바뀌어 실제로 이렇게 끊긴다) */
+  get degraded() { return this.stats.failStreak >= ODSAY.failStreakDegraded; }
+
+  get name() {
+    if (this.degraded) return 'subway-graph (odsay-failing)';
+    return this.liveOk ? 'odsay+subway' : 'subway-graph (odsay-pending)';
+  }
 
   get description() {
     return this.liveOk
@@ -80,6 +88,8 @@ export class OdsayRouter extends GraphRouter {
       failed: this.stats.failed,
       cacheHits: this.stats.cacheHits,
       throttled: this.stats.throttled,
+      failStreak: this.stats.failStreak,
+      degraded: this.degraded,
       intervalMs: this.interval,
       lastError: this.stats.lastError,
       // 파싱이 실패했을 때 ODsay 가 실제로 뭘 줬는지. 원인을 못 좁히면 손을 못 댄다.
@@ -218,6 +228,7 @@ export class OdsayRouter extends GraphRouter {
         }
 
         this.stats.ok++;
+        this.stats.failStreak = 0;
         this.liveOk = true;
         this.speedUp();
         return parsed.value;
@@ -235,6 +246,7 @@ export class OdsayRouter extends GraphRouter {
   /** 실패를 기록하고 null 을 돌려준다. 메시지에 키가 섞이지 않게 주의한다. */
   fail(reason) {
     this.stats.failed++;
+    this.stats.failStreak++;
     this.stats.lastError = scrub(reason, this.apiKey);
     console.error('[odsay] 호출 실패:', this.stats.lastError);
     return null;

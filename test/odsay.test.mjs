@@ -438,6 +438,30 @@ describe('어댑터 선택', () => {
     assert.equal(r.health.live, true);
   });
 
+  test('캐시가 있어도 실호출이 연달아 깨지면 정상인 척하지 않는다', async () => {
+    // IP 화이트리스트를 쓰면 재배포 때 서버 IP 가 바뀌어 실제로 이렇게 끊긴다.
+    // 예전 캐시가 남아 있다는 이유로 odsay+subway 라고 표시하면 끊긴 걸 못 알아챈다.
+    const store = memStore();
+    await store.putRouteCache(1, 2, 20, 1550);          // 예전에 성공한 흔적
+    process.env.ODSAY_KEY = FAKE_KEY;
+    mockFetch(() => jsonRes({ error: [{ code: '500', message: '[ApiKeyAuthFailed] ApiKey authentication failed.' }] }));
+
+    const r = new OdsayRouter({ graph: G, store, apiKey: FAKE_KEY, intervalMs: 1 });
+    await r.init();
+    assert.equal(r.name, 'odsay+subway', '캐시가 있으면 일단 정상으로 본다');
+
+    for (let i = 0; i < ODSAY.failStreakDegraded; i++) await r.fetchPair(sid('서울역'), sid('강남'));
+    assert.equal(r.degraded, true);
+    assert.equal(r.name, 'subway-graph (odsay-failing)');
+    assert.match(r.health.lastError, /ApiKeyAuthFailed/);
+
+    // 다시 성공하면 원상 복구
+    mockFetch(() => jsonRes(okBody(20, 1550)));
+    await r.fetchPair(sid('서울역'), sid('사당'));
+    assert.equal(r.stats.failStreak, 0);
+    assert.equal(r.name, 'odsay+subway');
+  });
+
   test('키가 있어도 ODsay 가 죽어 있으면 pending 으로 남는다', async () => {
     process.env.ODSAY_KEY = FAKE_KEY;
     mockFetch(() => jsonRes({}, 500));
