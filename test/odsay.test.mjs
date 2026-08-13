@@ -53,7 +53,12 @@ const jsonRes = (body, status = 200) => ({
 });
 afterEach(() => { globalThis.fetch = realFetch; });
 
-const mk = (store = memStore()) => new OdsayRouter({ graph: G, store, apiKey: FAKE_KEY });
+/* 타이밍을 보는 테스트가 아니면 호출 간격을 낮춰 둔다.
+ * 기본값(250ms)으로 전부 돌리면 스위트가 80초까지 늘어난다. */
+const mk = (store = memStore(), opts = {}) =>
+  new OdsayRouter({ graph: G, store, apiKey: FAKE_KEY, intervalMs: 1, ...opts });
+/** 간격 동작 자체를 보는 테스트용 — 운영과 같은 설정 */
+const mkTimed = (store = memStore()) => new OdsayRouter({ graph: G, store, apiKey: FAKE_KEY });
 const sid = (n) => G.findStations(n)[0].id;
 
 /* ============================================================ 응답 파싱 */
@@ -151,14 +156,14 @@ describe('키 취급', () => {
   });
 
   test('앞뒤 공백·줄바꿈은 털어낸다 (환경변수 붙여넣기 사고 방지)', () => {
-    const r = new OdsayRouter({ graph: G, store: memStore(), apiKey: `  ${FAKE_KEY}\n` });
+    const r = new OdsayRouter({ graph: G, store: memStore(), apiKey: `  ${FAKE_KEY}\n`, intervalMs: 1 });
     assert.equal(r.apiKey, FAKE_KEY);
     assert.equal(r.keyInfo.trimmed, true);
     assert.equal(r.keyInfo.length, FAKE_KEY.length);
   });
 
   test('진단 정보에는 길이·형태만 담고 키 값은 없다', () => {
-    const r = new OdsayRouter({ graph: G, store: memStore(), apiKey: FAKE_KEY });
+    const r = new OdsayRouter({ graph: G, store: memStore(), apiKey: FAKE_KEY, intervalMs: 1 });
     const dump = JSON.stringify(r.health);
     assert.ok(!dump.includes(FAKE_KEY));
     assert.equal(r.health.key.length, FAKE_KEY.length);
@@ -283,8 +288,56 @@ describe('중간지점 계산', () => {
       return jsonRes(okBody(30, 1550));
     };
     await mk().findMeetingPoint(origins(), { topN: 5 });
+    // 최소 간격 게이트가 걸린 뒤로는 실제 동시 실행이 1까지 떨어질 수 있다.
+    // 여기서 지켜야 하는 건 "한도를 넘지 않는다" 뿐이다.
     assert.ok(peak <= ODSAY.concurrency, `동시 ${peak}개 (한도 ${ODSAY.concurrency})`);
-    assert.ok(peak > 1, '병렬로 돌지 않았다');
+  });
+
+  test('호출 간 최소 간격을 지킨다 (429 방지)', async () => {
+    const at = [];
+    globalThis.fetch = async () => { at.push(Date.now()); return jsonRes(okBody(20, 1550)); };
+    await mkTimed().findMeetingPoint(['강남', '노원'].map(sid), { topN: 3 });
+
+    at.sort((a, b) => a - b);
+    const gaps = at.slice(1).map((t, i) => t - at[i]);
+    assert.ok(at.length >= 6, `호출이 너무 적어 간격을 볼 수 없다 (${at.length})`);
+    // 타이머 오차를 감안해 약간 여유를 둔다
+    const floor = ODSAY.minIntervalMs - 40;
+    const tooFast = gaps.filter((g) => g < floor);
+    assert.equal(tooFast.length, 0, `간격이 ${floor}ms 미만인 호출 ${tooFast.length}건: ${tooFast}`);
+  });
+
+  test('429 를 만나면 호출 간격 자체가 넓어진다', async () => {
+    const r = mkTimed();
+    let n = 0;
+    const at = [], intervals = [];
+    calls = [];
+    globalThis.fetch = async () => {
+      calls.push('x'); at.push(Date.now()); intervals.push(r.interval);
+      return ++n === 1 ? jsonRes({}, 429) : jsonRes(okBody(20, 1550));
+    };
+    await r.findMeetingPoint(['강남', '노원'].map(sid), { topN: 3 });
+    assert.ok(r.stats.throttled >= 1, '429 카운트가 안 올라갔다');
+
+    /* 간격 자체가 늘어나야 한다. 예약 슬롯만 뒤로 밀면 큐가 이미 길 때
+     * 아무 효과가 없고 초당 호출 수도 그대로다.
+     * (뒤이어 성공이 쌓이면 다시 좁아지므로 최종값이 아니라 최댓값을 본다) */
+    assert.ok(Math.max(...intervals) >= ODSAY.minIntervalMs * 2,
+      `간격이 안 늘었다: 최대 ${Math.max(...intervals)}ms (기본 ${ODSAY.minIntervalMs}ms)`);
+
+    at.sort((a, b) => a - b);
+    const gaps = at.slice(1).map((t, i) => t - at[i]);
+    assert.ok(Math.max(...gaps) >= ODSAY.minIntervalMs * 2 - 40,
+      `429 뒤 최대 공백 ${Math.max(...gaps)}ms — 실제 호출 간격이 안 벌어졌다`);
+  });
+
+  test('계속 성공하면 간격이 원래대로 돌아온다', async () => {
+    mockFetch(() => jsonRes(okBody(20, 1550)));
+    const r = mkTimed();
+    r.interval = ODSAY.maxIntervalMs;          // 이미 느려진 상태에서 시작
+    r.okStreak = ODSAY.intervalRecoverAfter - 1;
+    await r.fetchPair(sid('서울역'), sid('강남'));
+    assert.ok(r.interval < ODSAY.maxIntervalMs, `간격이 안 줄었다: ${r.interval}ms`);
   });
 
   test('호출 수가 후보×참여자를 넘지 않고 예산 안에 있다', async () => {

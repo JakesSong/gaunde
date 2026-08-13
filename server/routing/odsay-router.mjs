@@ -36,7 +36,7 @@ async function mapLimit(items, limit, fn) {
 }
 
 export class OdsayRouter extends GraphRouter {
-  constructor({ graph, store, apiKey }) {
+  constructor({ graph, store, apiKey, intervalMs }) {
     super({ graph });
     this.store = store;
 
@@ -54,8 +54,13 @@ export class OdsayRouter extends GraphRouter {
       trimmed: raw.length !== String(apiKey ?? '').length,
     };
 
-    this.stats = { calls: 0, ok: 0, failed: 0, cacheHits: 0, lastError: null, lastBody: null };
+    this.stats = { calls: 0, ok: 0, failed: 0, cacheHits: 0, throttled: 0, lastError: null, lastBody: null };
     this.liveOk = false;    // ODsay 에서 온 값이 실제로 쓰이고 있는가
+    this.nextSlot = 0;      // 다음 호출을 보낼 수 있는 가장 이른 시각 (전체 공유)
+    /* 기본 간격. 테스트에서만 낮춰 쓰라고 열어둔다 — 운영에서는 config 값을 그대로 쓴다. */
+    this.baseInterval = intervalMs ?? ODSAY.minIntervalMs;
+    this.interval = this.baseInterval;     // 429 를 맞으면 늘어나고, 잘 되면 되돌아온다
+    this.okStreak = 0;
   }
 
   get name() { return this.liveOk ? 'odsay+subway' : 'subway-graph (odsay-pending)'; }
@@ -74,6 +79,8 @@ export class OdsayRouter extends GraphRouter {
       ok: this.stats.ok,
       failed: this.stats.failed,
       cacheHits: this.stats.cacheHits,
+      throttled: this.stats.throttled,
+      intervalMs: this.interval,
       lastError: this.stats.lastError,
       // 파싱이 실패했을 때 ODsay 가 실제로 뭘 줬는지. 원인을 못 좁히면 손을 못 댄다.
       lastBody: this.stats.lastBody,
@@ -97,6 +104,34 @@ export class OdsayRouter extends GraphRouter {
     } catch (e) {
       console.error('  ODsay 초기화 실패:', e.message);
     }
+  }
+
+  /**
+   * 호출 간 간격을 지킨다.
+   * 동시성만 낮추면 빠른 응답끼리 붙어 순간 속도가 다시 튀므로,
+   * 인스턴스 전체가 공유하는 시간 슬롯을 잡아 간격을 강제한다.
+   */
+  async waitTurn() {
+    const now = Date.now();
+    const at = Math.max(now, this.nextSlot);
+    this.nextSlot = at + this.interval;
+    if (at > now) await sleep(at - now);
+  }
+
+  /* 429 를 맞으면 간격 자체를 늘린다.
+   * 예약된 슬롯을 뒤로 미는 것만으로는 부족하다 — 큐가 이미 길면 그 슬롯들이
+   * backoff 보다 멀리 잡혀 있어서 아무 효과가 없고, 초당 호출 수도 그대로다.
+   * 속도를 실제로 낮추려면 앞으로 잡을 슬롯의 간격을 넓혀야 한다. */
+  slowDown() {
+    this.okStreak = 0;
+    this.interval = Math.min(this.interval * 2, ODSAY.maxIntervalMs);
+  }
+
+  /** 한동안 잘 되면 조금씩 원래 속도로 되돌린다 */
+  speedUp() {
+    if (++this.okStreak < ODSAY.intervalRecoverAfter) return;
+    this.okStreak = 0;
+    this.interval = Math.max(this.baseInterval, Math.round(this.interval * 0.8));
   }
 
   /** 키가 살아 있는지 한 쌍만 확인 (결과는 캐시에 남아 재사용된다) */
@@ -153,6 +188,7 @@ export class OdsayRouter extends GraphRouter {
     url.searchParams.set('output', 'json');
 
     for (let attempt = 0; ; attempt++) {
+      await this.waitTurn();
       this.stats.calls++;
       try {
         const res = await fetch(url, {
@@ -161,8 +197,13 @@ export class OdsayRouter extends GraphRouter {
         });
 
         if (res.status === 429 || res.status >= 500) {
+          const backoff = ODSAY.backoffMs * Math.pow(2, attempt);
+          if (res.status === 429) {
+            this.stats.throttled++;
+            this.slowDown();
+          }
           if (attempt < ODSAY.maxRetry) {
-            await sleep(ODSAY.backoffMs * Math.pow(2, attempt));
+            await sleep(backoff);
             continue;
           }
           return this.fail(`HTTP ${res.status}`);
@@ -178,6 +219,7 @@ export class OdsayRouter extends GraphRouter {
 
         this.stats.ok++;
         this.liveOk = true;
+        this.speedUp();
         return parsed.value;
       } catch (e) {
         // AbortError(타임아웃) 포함

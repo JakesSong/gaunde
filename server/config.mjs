@@ -49,10 +49,17 @@ export const ODSAY = {
   url: process.env.ODSAY_URL || 'https://api.odsay.com/v1/api/searchPubTransPathT',
   shortlist: 12,            // 그래프가 추려서 ODsay 에 물어볼 후보 수
   maxCallsPerRequest: 80,   // 한 번의 결과 계산이 쓸 수 있는 최대 신규 호출 수
-  concurrency: 6,           // 동시 호출 수 (429 방지)
+
+  /* 초당 호출 한도가 있다. 동시 6개로 몰아쳤더니 24쌍 중 절반이 429 로 튕겼다.
+   * 동시성만 줄이면 빠른 응답끼리 여전히 붙어버려서, 호출 사이 최소 간격도 함께 둔다.
+   * 동시 3개 + 250ms 간격 ≈ 초당 4회. 24쌍이면 6초쯤 걸리고, 그다음부터는 캐시가 받는다. */
+  concurrency: 3,
+  minIntervalMs: 250,       // 호출과 호출 사이 기본 간격 (인스턴스 전체 공유)
+  maxIntervalMs: 2000,      // 429 를 맞으면 간격을 2배씩 늘리되 여기까지만
+  intervalRecoverAfter: 10, // 연속 성공 이 횟수마다 간격을 조금씩 되돌린다
   timeoutMs: 6000,
-  maxRetry: 2,              // 429/네트워크 오류 재시도 횟수
-  backoffMs: 400,           // 재시도 대기 (시도마다 2배)
+  maxRetry: 3,              // 429/네트워크 오류 재시도 횟수
+  backoffMs: 800,           // 재시도 대기 (시도마다 2배)
   cacheTtlDays: 7,
 };
 
