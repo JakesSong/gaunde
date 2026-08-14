@@ -101,6 +101,47 @@ describe('CSS 가시성 불변식', () => {
     }
   });
 
+  test('피드백 블록은 점선 박스다 (안 A)', () => {
+    const rule = body.match(/(^|\})\s*\.fb\s*\{([^}]*)\}/);
+    assert.ok(rule, '.fb 규칙을 찾지 못했다');
+    const d = rule[2];
+    assert.match(d, /border:\s*1px dashed/, '점선 테두리가 없다');
+    assert.match(d, /border-radius:\s*12px/);
+    assert.match(d, /padding:\s*12px/);
+    assert.match(d, /background:\s*var\(--fb-bg\)/, '배경이 토큰으로 지정되지 않았다');
+  });
+
+  test('피드백 박스 안 글자가 배경 대비 4.5:1 을 넘는다', () => {
+    /* 연초록 배경에 기존 회색(--sub)을 그대로 두면 3.56:1 로 미달이라
+       박스를 넣을 때 글자색도 같이 올렸다. 되돌아가지 않게 못 박는다. */
+    const tok = (name) => (css.match(new RegExp('--' + name + ':\\s*(#[0-9A-Fa-f]{6})')) || [])[1];
+    const lum = (hex) => {
+      const v = [1, 3, 5].map((i) => parseInt(hex.substr(i, 2), 16) / 255)
+        .map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+      return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+    };
+    const ratio = (a, b) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const bg = tok('fb-bg');
+    assert.ok(bg, '--fb-bg 토큰이 없다');
+    for (const name of ['fb-ink', 'fb-ok']) {
+      const fg = tok(name);
+      assert.ok(fg, `--${name} 토큰이 없다`);
+      const r = ratio(fg, bg);
+      assert.ok(r >= 4.5, `--${name}(${fg}) 가 --fb-bg(${bg}) 위에서 ${r.toFixed(2)}:1 — 4.5 미만`);
+    }
+  });
+
+  test('피드백 테두리는 앱 초록과 같은 값이다', () => {
+    // 다른 초록(#12b869 등)을 쓰면 브랜드 마크·레일과 미묘하게 어긋난다
+    const line = (css.match(/--line:\s*(#[0-9A-Fa-f]{6})/) || [])[1];
+    const fbLine = (css.match(/--fb-line:\s*(#[0-9A-Fa-f]{6})/) || [])[1];
+    assert.equal(fbLine.toUpperCase(), line.toUpperCase(),
+      `--fb-line(${fbLine}) 이 앱 초록 --line(${line}) 과 다르다`);
+  });
+
   test('hidden 속성이 display 규칙에 덮이지 않는다', () => {
     // .acts{display:flex} 같은 규칙이 있으면 hidden 속성만으로는 안 숨겨진다
     assert.match(body, /\[hidden\]\s*\{[^}]*display:\s*none\s*!important/,
