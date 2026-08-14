@@ -312,11 +312,11 @@ class PostgresStore {
       CREATE INDEX IF NOT EXISTS events_meeting ON events(meeting_id);
       CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
       CREATE TABLE IF NOT EXISTS meeting_results (
-        meeting_id        TEXT PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
-        participants_hash TEXT NOT NULL,
-        result_json       TEXT NOT NULL,
-        routing           TEXT,
-        created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        meeting_id        uuid PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
+        participants_hash text NOT NULL,
+        result_json       text NOT NULL,
+        routing           text,
+        created_at        timestamptz NOT NULL DEFAULT now()
       );
     `);
     // RLS 는 supabase/schema.sql 과 동일하게. 백엔드는 테이블 소유자로 붙으므로 영향받지 않고,
