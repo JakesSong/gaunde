@@ -13,7 +13,8 @@
     "test": "node --test test/*.test.mjs",
     "start": "node server/index.mjs",
     "dev": "node --watch server/index.mjs",
-    "deploy:pages": "bash scripts/deploy-pages.sh"
+    "deploy:pages": "node scripts/stamp-assets.mjs && bash scripts/deploy-pages.sh",
+    "stamp": "node scripts/stamp-assets.mjs"
   },
   "dependencies": {
     "cors": "^2.8.6",

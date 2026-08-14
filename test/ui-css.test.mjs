@@ -27,6 +27,28 @@ function withoutKeyframes(text) {
 /** 주석을 걷어낸다 (설명문에 든 예시 코드가 걸리지 않게) */
 const body = withoutKeyframes(css).replace(/\/\*[\s\S]*?\*\//g, '');
 
+describe('캐시버스팅', () => {
+  test('스크립트 태그에 내용 해시 버전이 붙어 있다', () => {
+    /* GitHub Pages + Safari 조합에서 강제 새로고침으로도 예전 app.js 를
+       계속 쓰는 일이 있어, 파일이 바뀌면 URL 도 바뀌게 해 둔다. */
+    const tags = [...html.matchAll(/<script\s+src="\.\/([\w.-]+\.js)(\?v=([0-9a-f]+))?"/g)];
+    assert.ok(tags.length >= 2, `스크립트 태그가 너무 적다 (${tags.length})`);
+    for (const [, file, , v] of tags) {
+      assert.ok(v, `${file} 에 ?v= 버전이 없다 — npm run stamp 를 실행하세요`);
+    }
+  });
+
+  test('버전이 실제 파일 내용과 일치한다 (stamp 를 빼먹지 않았는지)', async () => {
+    const crypto = await import('node:crypto');
+    const tags = [...html.matchAll(/<script\s+src="\.\/([\w.-]+\.js)\?v=([0-9a-f]+)"/g)];
+    for (const [, file, v] of tags) {
+      const buf = fs.readFileSync(path.join(ROOT, 'public', file));
+      const want = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 8);
+      assert.equal(v, want, `${file} 의 버전이 내용과 다르다 — npm run stamp 필요`);
+    }
+  });
+});
+
 describe('CSS 가시성 불변식', () => {
   test('애니메이션이 안 돌아도 보이는 상태여야 한다 — opacity:0 을 기본값으로 두지 않는다', () => {
     /* @keyframes 밖에서 opacity:0 을 기본으로 두면,
@@ -53,12 +75,30 @@ describe('CSS 가시성 불변식', () => {
     assert.ok(!/opacity/.test(decls), '.stop 기본값에 opacity 를 두지 않는다');
   });
 
-  test('pop 키프레임은 from/to 를 모두 갖는다', () => {
-    // backwards 는 "from 상태" 를 지연 구간에 적용하므로 from 이 반드시 있어야 한다
+  test('등장 애니메이션은 opacity 를 건드리지 않는다', () => {
+    /* animation-fill-mode:backwards 는 지연 구간에 from 상태를 적용한다.
+       from 에 opacity:0 이 있으면, 애니메이션이 진행되지 않는 환경에서
+       그 상태로 굳어 영영 안 보인다 (배포본에서 실제로 발생).
+       transform 만 쓰면 최악의 경우에도 살짝 밀린 채 보인다. */
     const kf = css.match(/@keyframes\s+pop\s*\{([\s\S]*?)\}\s*\n/);
     assert.ok(kf, 'pop 키프레임을 찾지 못했다');
-    assert.match(kf[1], /from\s*\{/, 'from 이 없으면 backwards 가 쓸 상태가 없다');
+    assert.match(kf[1], /from\s*\{/);
     assert.match(kf[1], /to\s*\{/);
+    assert.ok(!/opacity/.test(kf[1]),
+      `pop 키프레임이 opacity 를 애니메이션한다: ${kf[1].trim()}`);
+  });
+
+  test('fill-mode:backwards 를 쓰는 규칙의 키프레임에는 opacity 가 없어야 한다', () => {
+    // 앞으로 다른 애니메이션이 추가돼도 같은 함정에 빠지지 않게 일반화한다
+    const rules = [...body.matchAll(/([^{}]+)\{([^{}]*animation:[^;}]*backwards[^;}]*)[;}]/g)];
+    for (const [, selector, decls] of rules) {
+      const name = (decls.match(/animation:\s*([\w-]+)/) || [])[1];
+      if (!name) continue;
+      const kf = css.match(new RegExp('@keyframes\\s+' + name + '\\s*\\{([\\s\\S]*?)\\}\\s*\\n'));
+      if (!kf) continue;
+      assert.ok(!/opacity/.test(kf[1]),
+        `${selector.trim()} 이 backwards 로 쓰는 @keyframes ${name} 에 opacity 가 있다`);
+    }
   });
 
   test('hidden 속성이 display 규칙에 덮이지 않는다', () => {

@@ -9,6 +9,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# 자산 버전 도장이 최신인지 (npm run deploy:pages 가 먼저 찍어준다)
+if ! node scripts/stamp-assets.mjs --check >/dev/null 2>&1; then
+  echo "자산 버전이 오래됐습니다. \`npm run stamp\` 후 커밋하세요." >&2
+  exit 1
+fi
+
 if [ -n "$(git status --porcelain public/)" ]; then
   echo "public/ 에 커밋되지 않은 변경이 있습니다. 먼저 커밋하세요." >&2
   git status --short public/ >&2
