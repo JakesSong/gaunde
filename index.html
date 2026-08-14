@@ -19,6 +19,9 @@
     --rule:#DDE2D8;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  /* hidden 속성은 UA 기본 display:none 으로 동작하는데, 작성자 규칙이 display 를 주면 덮인다.
+     .acts{display:flex} 때문에 오류 화면에서도 맛집/카페 버튼이 보였다. */
+  [hidden]{display:none !important}
   html,body{margin:0;padding:0}
   body{
     background:var(--paper);
@@ -122,8 +125,14 @@
   .railfill{position:absolute;left:50%;top:0;width:3px;background:var(--line);transform:translateX(-50%) scaleY(0);
     transform-origin:top;border-radius:2px;height:100%;transition:transform .9s cubic-bezier(.4,.8,.3,1)}
   .on .railfill{transform:translateX(-50%) scaleY(1)}
+  /* 기본 상태는 "보이는" 것이어야 한다.
+     예전에는 opacity:0 으로 시작해 animation 이 켜 주기를 기다렸는데,
+     iOS 저전력 모드처럼 브라우저가 애니메이션을 건너뛰면 영영 안 보였다
+     (높이는 그대로라 초록 레일만 길게 남았다).
+     이제 animation-fill-mode:backwards 로 "들어오는 동안만" 숨긴다.
+     애니메이션이 아예 안 돌면 그냥 처음부터 보인다. */
   .stop{position:relative;display:flex;align-items:center;gap:12px;padding:6px 0;
-    opacity:0;transform:translateY(6px);animation:pop .5s forwards}
+    animation:pop .5s backwards}
   .stop:nth-child(3){animation-delay:.25s}
   .stop:nth-child(4){animation-delay:.4s}
   .stop:nth-child(5){animation-delay:.55s}
@@ -131,7 +140,7 @@
   .stop:nth-child(7){animation-delay:.9s}
   .stop:nth-child(8){animation-delay:1.05s}
   .stop:nth-child(9){animation-delay:1.2s}
-  @keyframes pop{to{opacity:1;transform:none}}
+  @keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
   .stop .who{width:calc(50% - 16px);text-align:right;font-size:13.5px;letter-spacing:-.02em}
   .stop .who small{display:block;font-size:11.5px;color:var(--sub);margin-top:2px}
   .node{width:13px;height:13px;border-radius:50%;background:#fff;border:3px solid var(--line);flex:none;z-index:1}
