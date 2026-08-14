@@ -342,6 +342,7 @@
     $('rlede').textContent = '…';
     $('alts').hidden = true;
     $('acts').hidden = true;
+    $('fb').hidden = true;
     showErr('err2', '');
 
     api('/api/meetings/' + encodeURIComponent(state.token) + '/result')
@@ -415,12 +416,36 @@
     groups.forEach(function (g, i) { (i % 2 === 0 ? top : bottom).push(g); });
     bottom.reverse();
 
-    /* 세로 간격을 소요시간에 비례시킨다 — 멀수록 만날 역에서 멀리 그려진다 */
-    var maxMin = Math.max.apply(null, groups.map(function (g) { return g.min; })) || 1;
-    var pxPerMin = Math.max(1.2, Math.min(7, 96 / maxMin));
-    function gapFor(cur, next) {          // next 는 만날 역 쪽으로 한 칸 안쪽
-      var diff = Math.abs(cur - (next === undefined ? 0 : next));
-      return Math.round(diff * pxPerMin);
+    /* 세로 간격을 소요시간에 비례시키되 전체 높이를 눌러 담는다.
+       순수 비례로 두면 시간차가 큰 모임에서 레일이 화면 몇 개 분량으로 늘어났다.
+       - 허브에서의 거리 = MAX_ARM * (t/tmax)^CURVE 로 완만하게 눌러
+         순서와 상대 비례는 유지하되 극단값이 전체를 늘리지 못하게 한다.
+       - 인접 노드는 최소 MIN_GAP 만 벌려 붙어 보이지 않게 한다.
+       결과적으로 다이어그램 높이가 참여자 수와 무관하게 한 화면에 들어온다. */
+    var MAX_ARM = 84;    // 허브에서 가장 먼 노드까지의 최대 여백(px)
+    var MIN_GAP = 6;     // 인접 노드 사이 최소 여백(px)
+    var CURVE = 0.62;    // 1 이면 순수 비례, 낮을수록 큰 값이 더 눌린다
+    var mins = groups.map(function (g) { return g.min; });
+    var maxMin = Math.max.apply(null, mins) || 1;
+    var minMin = Math.min.apply(null, mins);
+    var spread = maxMin - minMin;
+
+    /* 눈금은 "0분부터" 가 아니라 "가장 가까운 사람부터" 잡는다.
+       18~26분처럼 다들 비슷하게 먼 모임에서 0분 기준으로 그리면
+       허브 둘레가 통째로 빈 공간이 된다.
+       대신 차이가 작을수록 눈금도 좁혀서, 1~2분 차이가 화면에서
+       큰 차이처럼 과장되지 않게 한다. */
+    var spanFactor = maxMin > 0 ? Math.min(1, spread / maxMin) : 0;
+    var span = (MAX_ARM - MIN_GAP) * spanFactor;
+
+    function arm(t) {                     // 허브에서 t분 떨어진 사람의 거리(px)
+      if (t <= 0) return 0;
+      if (spread <= 0) return MIN_GAP;    // 다 같은 시간이면 나란히
+      return MIN_GAP + span * Math.pow((t - minMin) / spread, CURVE);
+    }
+    function gapFor(cur, next) {          // next 가 undefined 면 바로 안쪽이 만날 역
+      var d = arm(cur) - (next === undefined ? 0 : arm(next));
+      return Math.round(Math.max(MIN_GAP, d));
     }
 
     var html = '<div class="rail"></div><div class="railfill"></div>';
@@ -458,7 +483,65 @@
     $('food').href = 'https://map.kakao.com/?q=' + q + '+맛집';
     $('cafe').href = 'https://map.kakao.com/?q=' + q + '+카페';
     $('acts').hidden = false;
+    renderFeedback();
   }
+
+  /* ------------------------------------------------------------ 결과 피드백 */
+  function fbKey() { return 'gaunde.fb.' + state.token; }
+
+  function renderFeedback() {
+    var saved = localStorage.getItem(fbKey());
+    $('fb').hidden = false;
+    if (saved) return fbThanks();
+    $('fbq').textContent = '이 추천, 도움이 됐어요?';
+    $('fbvote').hidden = false;
+    $('fbwhy').hidden = true;
+  }
+
+  function fbThanks(msg) {
+    $('fbvote').hidden = true;
+    $('fbwhy').hidden = true;
+    $('fbq').innerHTML = '<span class="fbthanks">' + (msg || '고마워요! 의견이 반영돼요') + '</span>';
+  }
+
+  /** 서버로 보낸다. 실패해도 UX 를 막지 않는다 (기존 track 과 같은 방식). */
+  function sendFeedback(value, reason) {
+    var station = state.shownSpot ? state.shownSpot.station.name : null;
+    localStorage.setItem(fbKey(), value + (reason ? ':' + reason : ''));
+    try {
+      var body = JSON.stringify({
+        event: 'result_feedback', token: state.token,
+        value: value, reason: reason || undefined, station: station, clientId: clientId,
+      });
+      if (navigator.sendBeacon && navigator.sendBeacon(API + '/api/track', new Blob([body], { type: 'application/json' }))) return;
+      fetch(API + '/api/track', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: body, keepalive: true,
+      }).catch(function () {});
+    } catch (e) { /* 측정은 기능보다 뒤다 */ }
+  }
+
+  $('fbvote').addEventListener('click', function (e) {
+    var b = e.target.closest('.fbbtn');
+    if (!b) return;
+    if (b.dataset.v === 'good') {
+      sendFeedback('good');
+      fbThanks();
+      return;
+    }
+    /* 불만족은 이유를 한 번 더 묻는다. 이유 없이 닫아도 'bad' 는 이미 집계된다. */
+    sendFeedback('bad');
+    $('fbvote').hidden = true;
+    $('fbq').textContent = '어떤 점이 아쉬웠나요?';
+    $('fbwhy').hidden = false;
+  });
+
+  $('fbwhy').addEventListener('click', function (e) {
+    var b = e.target.closest('.fbchip');
+    if (!b) return;
+    sendFeedback('bad', b.dataset.r);
+    fbThanks('고마워요! 더 나은 추천에 쓸게요');
+  });
 
   function stopRow(g, style) {
     var names = g.legs.map(function (l) { return l.lineName; });
@@ -466,16 +549,16 @@
     var css = [];
     if (style.marginTop) css.push('margin-top:' + style.marginTop + 'px');
     if (style.marginBottom) css.push('margin-bottom:' + style.marginBottom + 'px');
-    // ODsay 시간은 버스가 섞였을 수 있어 지하철 노선명을 단정적으로 쓰지 않는다
-    var via = g.timeSource === 'odsay'
-      ? (uniq ? ' · 지하철 기준 ' + esc(uniq) : '')
-      : (uniq ? ' · ' + esc(uniq) : '');
+    /* ODsay 시간은 버스가 섞였을 수 있어 지하철 노선명을 붙이지 않는다.
+       기준은 상단 문구(실시간 대중교통 기준)가 이미 밝히고 있고,
+       한 줄로 줄이면 행 높이가 줄어 다이어그램도 짧아진다. */
+    var via = g.timeSource === 'odsay' ? '' : (uniq ? ' · ' + esc(uniq) : '');
+    var parts = [g.min + '분' + via + (g.transfers ? ' · 환승' + g.transfers : '')];
+    if (g.fare) parts.push(won(g.fare));
     return '<div class="stop"' + (css.length ? ' style="' + css.join(';') + '"' : '') + '>' +
       '<div class="who">' + esc(g.names.join('·')) +
       '<small>' + esc(g.origin) + '</small></div><div class="node"></div>' +
-      '<div class="mins">' + g.min + '분' + via +
-      (g.transfers ? ' · 환승' + g.transfers : '') +
-      (g.fare ? '<br>' + won(g.fare) : '') + '</div></div>';
+      '<div class="mins">' + parts.join(' · ') + '</div></div>';
   }
 
   /* 결과 카드를 이미지로 떠서 공유한다.
