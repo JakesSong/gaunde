@@ -194,6 +194,18 @@ check('맛집 링크가 새 탭으로', lastWin.document.getElementById('food').
 check('세로 간격이 소요시간에 비례',
   [...lastWin.document.querySelectorAll('#rmap .stop:not(.hit)')].some((s) => /margin-(top|bottom):\s*\d+px/.test(s.getAttribute('style') || '')));
 
+/* 먼 사람이 바깥, 가까운 사람이 만날 역 쪽에 와야 한다.
+   예전엔 위쪽 그룹을 뒤집어서 가장 가까운 사람이 제일 멀리 그려졌다. */
+{
+  const all = [...lastWin.document.querySelectorAll('#rmap .stop')];
+  const hitAt = all.findIndex((s) => s.classList.contains('hit'));
+  const mins = (el) => Number((el.querySelector('.mins')?.textContent || '').match(/(\d+)분/)?.[1] ?? -1);
+  const above = all.slice(0, hitAt).map(mins);
+  const below = all.slice(hitAt + 1).map(mins);
+  check('위쪽은 먼 사람 → 가까운 사람 순', above.every((v, i) => i === 0 || above[i - 1] >= v), above.join(' ≥ '));
+  check('아래쪽은 가까운 사람 → 먼 사람 순', below.every((v, i) => i === 0 || below[i - 1] <= v), below.join(' ≤ '));
+}
+
 const altBtns = [...lastWin.document.querySelectorAll('#altrows .altrow')];
 check('후보 목록이 버튼으로 렌더', altBtns.length >= 2, altBtns.length + '개');
 check('첫 후보가 선택 상태', altBtns[0].classList.contains('on'));

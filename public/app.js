@@ -406,10 +406,14 @@
     });
     groups.sort(function (a, b) { return b.min - a.min; });
 
-    /* 먼 사람이 바깥, 가까운 사람이 안쪽. 위아래로 번갈아 배치한다. */
+    /* 먼 사람이 바깥, 가까운 사람이 만날 역 쪽. 위아래로 번갈아 배치한다.
+       groups 는 소요시간 내림차순이므로
+         위쪽(위 → 아래로 그림)  : 그대로. 먼 사람이 맨 위, 가까운 사람이 만날 역 바로 위.
+         아래쪽(만날 역 → 아래로): 뒤집어야 가까운 사람이 만날 역 바로 아래로 온다.
+       예전에는 반대로 위쪽만 뒤집어서, 양쪽 다 가까운 사람이 제일 멀리 그려졌다. */
     var top = [], bottom = [];
     groups.forEach(function (g, i) { (i % 2 === 0 ? top : bottom).push(g); });
-    top.reverse();                       // 위쪽은 먼 사람이 맨 위로
+    bottom.reverse();
 
     /* 세로 간격을 소요시간에 비례시킨다 — 멀수록 만날 역에서 멀리 그려진다 */
     var maxMin = Math.max.apply(null, groups.map(function (g) { return g.min; })) || 1;
