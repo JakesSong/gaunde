@@ -258,6 +258,53 @@ log('\n■ 같은 역 참여자 병합 + 수정/삭제');
 }
 
 /* ================================================================= */
+log('\n■ 결과 스냅샷 캐시');
+{
+  const health = () => fetch(`${BASE}/api/health`).then((r) => r.json());
+  const get = () => fetch(`${BASE}/api/meetings/${token}/result`).then((r) => r.json());
+
+  const h0 = await health();
+  const t0 = Date.now(); const a = await get(); const ms1 = Date.now() - t0;
+  const h1 = await health();
+  const t1 = Date.now(); const b = await get(); const ms2 = Date.now() - t1;
+  const h2 = await health();
+
+  log(`        1차 ${ms1}ms (miss) → 2차 ${ms2}ms (hit)`);
+  check('첫 호출은 캐시 미스', h1.resultCache.misses === h0.resultCache.misses + 1,
+    `misses ${h0.resultCache.misses} → ${h1.resultCache.misses}`);
+  check('두 번째 호출은 캐시 히트', h2.resultCache.hits === h1.resultCache.hits + 1
+    && h2.resultCache.misses === h1.resultCache.misses,
+    `hits ${h1.resultCache.hits} → ${h2.resultCache.hits}`);
+  check('캐시 히트가 재계산보다 빠르다', ms2 <= ms1, `${ms1}ms → ${ms2}ms`);
+  check('cached 플래그가 구분된다', a.selection.cached === false && b.selection.cached === true,
+    `${a.selection.cached} → ${b.selection.cached}`);
+
+  const strip = (x) => { const c = { ...x, selection: { ...x.selection } }; delete c.selection.cached; return JSON.stringify(c); };
+  check('응답 내용이 동일하다', strip(a) === strip(b));
+
+  // 구성이 바뀌면 다시 계산한다
+  const pid = a.meeting.participants[0].id;
+  await fetch(`${BASE}/api/meetings/${token}/participants/${pid}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ station: '수원' }),
+  });
+  const h3 = await health();
+  const c = await get();
+  const h4 = await health();
+  check('참여자 변경 후엔 재계산한다', h4.resultCache.misses === h3.resultCache.misses + 1,
+    `misses ${h3.resultCache.misses} → ${h4.resultCache.misses}`);
+  check('바뀐 출발역이 결과에 반영된다', c.best.routes.some((r) => r.origin === '수원'),
+    c.best.routes.map((r) => r.origin).join(', '));
+
+  // 되돌려서 이후 검사에 영향 없게
+  await fetch(`${BASE}/api/meetings/${token}/participants/${pid}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ station: a.meeting.participants[0].station }),
+  });
+  await get();
+}
+
+/* ================================================================= */
 log('\n■ 결과 피드백 (위치 A)');
 {
   const doc = lastWin.document;

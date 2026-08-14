@@ -85,6 +85,28 @@ async function track(event, meeting, meta) {
   }
 }
 
+/* ------------------------------------------------------------------ 결과 스냅샷 캐시
+ *
+ * 결과 링크(?m=토큰&r=1)로 다시 들어올 때마다 후보 130개 minimax 를 다시 돌리고
+ * ODsay 를 다시 부르는 건 낭비다. 참여자 구성이 그대로면 계산 결과도 그대로다.
+ *
+ * 키에는 응답에 드러나는 것을 전부 넣는다 — 출발역뿐 아니라 이름·인원도 응답에 실리므로
+ * 이름만 바뀌어도 캐시는 무효가 돼야 한다. 순서와 무관하게 같은 값이 나오도록 정렬한다.
+ * 노선도를 다시 빌드하면 역 id 가 밀릴 수 있어 그래프 생성시각도 함께 섞는다. */
+const RESULT_CACHE_TTL_DAYS = 7;
+const graphFingerprint = graph.meta.generatedAt || '';
+const resultCacheStats = { hits: 0, misses: 0 };
+
+function participantsHash(participants) {
+  const parts = participants
+    .map((p) => `${p.id}|${p.name}|${p.station_id}`)
+    .sort();
+  return crypto.createHash('sha256')
+    .update(`${graphFingerprint}\n${parts.join('\n')}`)
+    .digest('hex')
+    .slice(0, 32);
+}
+
 /** 이름이나 id 로 역을 찾는다. 동명이역이면 후보를 함께 돌려준다. */
 function resolveStation(input) {
   if (input === null || input === undefined || input === '') return { error: '출발역을 입력해 주세요.' };
@@ -103,12 +125,13 @@ function resolveStation(input) {
 /* ------------------------------------------------------------------ 라우트 */
 
 /** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
-const REV = 'feedback-9';
+const REV = 'result-cache-10';
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, rev: REV, db: dbKind, stations: graph.stations.length,
   routing: router.name, hubs: graph.hubIds.length, toleranceMin: TOLERANCE_MIN,
   // ODsay 를 쓸 때만 붙는다. 키는 절대 싣지 않는다.
+  resultCache: { ...resultCacheStats, ttlDays: RESULT_CACHE_TTL_DAYS },
   ...(router.health ? { odsay: router.health } : {}),
 }));
 
@@ -230,6 +253,34 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     return res.status(400).json({ error: '두 명 이상 출발역을 등록해야 계산할 수 있습니다.', participants: participants.map(shapeParticipant) });
   }
 
+  /* 참여자 구성이 그대로면 저장해둔 결과를 그대로 돌려준다.
+   * 조회 측정(result_viewed)은 캐시 히트여도 계속 남긴다. */
+  const hash = participantsHash(participants);
+  const cached = await store.getMeetingResult(meeting.id, hash, router.name, RESULT_CACHE_TTL_DAYS)
+    .catch((e) => { console.error('[result-cache] 조회 실패:', e.message); return null; });
+
+  if (cached) {
+    resultCacheStats.hits++;
+    let payload;
+    try {
+      payload = JSON.parse(cached);
+    } catch (e) {
+      console.error('[result-cache] 파싱 실패, 다시 계산합니다:', e.message);
+      payload = null;
+    }
+    if (payload) {
+      await track('result_viewed', meeting, {
+        participants: participants.length,
+        station: payload.best?.station?.name,
+        maxMin: payload.best?.maxMin,
+        cached: true,
+      });
+      payload.selection = { ...payload.selection, cached: true };
+      return res.json(payload);
+    }
+  }
+  resultCacheStats.misses++;
+
   const originIds = participants.map((p) => {
     const s = graph.stations[p.station_id];
     // 그래프를 다시 빌드해 id 가 밀렸을 수 있으므로 이름으로 한 번 더 확인한다.
@@ -275,9 +326,10 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     participants: participants.length,
     station: result.best.station.name,
     maxMin: Math.round(result.best.maxSec / 60),
+    cached: false,
   });
 
-  res.json({
+  const payload = {
     meeting: shapeMeeting(meeting, participants),
     best: shapeSpot(result.best),
     /** 프런트에서 후보를 눌러 바로 전환할 수 있게 경로까지 통째로 내려준다 */
@@ -291,7 +343,18 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     },
     /** 가장 불리한 사람이 "누군가의 집 앞"으로 갈 때의 최대 소요시간 — 절감 효과 문구용 */
     worstIfSomeonesHomeMin: Math.round(result.worstPairwiseSec / 60),
-  });
+  };
+  payload.selection.cached = false;
+
+  /* 저장 실패가 응답을 막지 않게 한다. 다음 요청에서 다시 계산하면 그만이다.
+   * 동시에 두 요청이 계산했더라도 같은 키로 upsert 되므로 결과는 같다. */
+  try {
+    await store.putMeetingResult(meeting.id, hash, JSON.stringify(payload), router.name);
+  } catch (e) {
+    console.error('[result-cache] 저장 실패:', e.message);
+  }
+
+  res.json(payload);
 }));
 
 /** 프런트에서만 알 수 있는 이벤트(공유 버튼 클릭 등)를 받는다.

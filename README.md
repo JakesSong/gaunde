@@ -195,7 +195,7 @@ render.yaml                 Render Blueprint
 | `POST /api/meetings/:token/participants` | 출발역 등록 (같은 기기면 덮어쓰기) |
 | `PATCH /api/meetings/:token/participants/:id` | 등록 내용 수정 |
 | `DELETE /api/meetings/:token/participants/:id` | 참여 취소 |
-| `GET /api/meetings/:token/result` | 중간지점 계산 |
+| `GET /api/meetings/:token/result` | 중간지점 계산 (참여자 구성이 그대로면 저장된 결과 반환) |
 | `POST /api/track` | 프런트에서만 아는 이벤트 수집 (fire-and-forget, 항상 204) |
 | `GET /api/stats` | KPI·퍼널 집계 (`?from=&to=` 로 기간 필터) |
 
@@ -292,6 +292,29 @@ curl -s 'https://<주소>/api/stats?from=2026-08-13&to=2026-08-14' | jq '.range,
 로컬 측정으로 같은 모임 재조회는 **60회 → 0회, 444ms → 8.7ms** 였다.
 
 버스가 빨라서 그래프 상위권 밖으로 밀린 역은 놓칠 수 있다. 쿼터를 지키기 위한 절충이다.
+
+### 계산 결과 캐시
+
+역쌍 캐시(`route_cache`) 위에 한 층 더 있다. 결과 링크(`?m=토큰&r=1`)로 다시 들어올 때마다
+후보 130개 minimax 를 다시 돌리고 ODsay 를 다시 부르면 쿼터와 CPU 가 그냥 샌다.
+**참여자 구성이 그대로면 계산 결과도 그대로**이므로 응답 전체를 저장해두고 그대로 돌려준다.
+
+- `meeting_results(meeting_id, participants_hash, result_json, routing, created_at)` — 모임당 한 행(upsert)
+- 키 = `sha256(그래프 생성시각 + 정렬된 "참여자id|이름|출발역id" 목록)`
+  출발역뿐 아니라 **이름·인원도 응답에 실리므로** 함께 넣는다. 이름만 고쳐도 캐시는 무효여야 한다.
+  정렬하므로 참여자 순서가 달라져도 같은 키가 나온다.
+- `routing` 이 바뀌면(그래프 → ODsay) 무효. TTL 7일.
+- 구성이 바뀌면 해시가 어긋나 자연히 무시되고, 다음 계산이 같은 행을 덮어쓴다.
+- `result_viewed` 는 캐시 히트여도 계속 기록한다(조회 측정이므로).
+
+로컬 측정 — 참여자 3명, ODsay 경로:
+
+| | ODsay 호출 | 시간 |
+|---|--:|--:|
+| 1차 (미스) | 40회 | 10,327ms |
+| 2차 (히트) | **0회** | **3ms** |
+
+`/api/health` 의 `resultCache` 에 hits/misses 가 나온다.
 
 ### 깨졌을 때
 

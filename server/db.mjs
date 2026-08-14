@@ -64,6 +64,13 @@ class SqliteStore {
       CREATE INDEX IF NOT EXISTS events_event   ON events(event);
       CREATE INDEX IF NOT EXISTS events_meeting ON events(meeting_id);
       CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
+      CREATE TABLE IF NOT EXISTS meeting_results (
+        meeting_id        TEXT PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
+        participants_hash TEXT NOT NULL,
+        result_json       TEXT NOT NULL,
+        routing           TEXT,
+        created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
     `);
     this.migrateParticipantIdentity();
     this.migrateFeedback();
@@ -102,6 +109,29 @@ class SqliteStore {
        DO UPDATE SET meta = excluded.meta,
                      created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
     ).run(crypto.randomUUID(), meetingId, meetingToken ?? null, clientKey, JSON.stringify(meta));
+  }
+
+  /* 결과 스냅샷 — 모임당 한 행만 둔다(최신이 이긴다).
+   * 참여자 구성이 그대로면 재계산 없이 이걸 그대로 돌려준다. */
+  async getMeetingResult(meetingId, hash, routing, ttlDays) {
+    const row = this.db.prepare(
+      `SELECT result_json FROM meeting_results
+       WHERE meeting_id = ? AND participants_hash = ? AND routing IS ?
+         AND julianday('now') - julianday(created_at) < ?`,
+    ).get(meetingId, hash, routing ?? null, ttlDays);
+    return row ? row.result_json : null;
+  }
+
+  async putMeetingResult(meetingId, hash, json, routing) {
+    this.db.prepare(
+      `INSERT INTO meeting_results (meeting_id, participants_hash, result_json, routing)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(meeting_id) DO UPDATE SET
+         participants_hash = excluded.participants_hash,
+         result_json = excluded.result_json,
+         routing = excluded.routing,
+         created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+    ).run(meetingId, hash, json, routing ?? null);
   }
 
   async getRouteCache(fromId, toId, ttlDays) {
@@ -281,6 +311,13 @@ class PostgresStore {
       CREATE INDEX IF NOT EXISTS events_event   ON events(event);
       CREATE INDEX IF NOT EXISTS events_meeting ON events(meeting_id);
       CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
+      CREATE TABLE IF NOT EXISTS meeting_results (
+        meeting_id        TEXT PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
+        participants_hash TEXT NOT NULL,
+        result_json       TEXT NOT NULL,
+        routing           TEXT,
+        created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
     `);
     // RLS 는 supabase/schema.sql 과 동일하게. 백엔드는 테이블 소유자로 붙으므로 영향받지 않고,
     // anon 키로는 아무것도 못 읽는 상태가 된다. ALTER 는 멱등이라 매 부팅 실행해도 안전하다.
@@ -311,7 +348,31 @@ class PostgresStore {
       ALTER TABLE participants ENABLE ROW LEVEL SECURITY;
       ALTER TABLE events       ENABLE ROW LEVEL SECURITY;
       ALTER TABLE route_cache  ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE meeting_results ENABLE ROW LEVEL SECURITY;
     `);
+  }
+
+  async getMeetingResult(meetingId, hash, routing, ttlDays) {
+    const { rows } = await this.pool.query(
+      `SELECT result_json FROM meeting_results
+       WHERE meeting_id = $1 AND participants_hash = $2 AND routing IS NOT DISTINCT FROM $3
+         AND created_at > now() - ($4 || ' days')::interval`,
+      [meetingId, hash, routing ?? null, String(ttlDays)],
+    );
+    return rows[0] ? rows[0].result_json : null;
+  }
+
+  async putMeetingResult(meetingId, hash, json, routing) {
+    await this.pool.query(
+      `INSERT INTO meeting_results (meeting_id, participants_hash, result_json, routing)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (meeting_id) DO UPDATE SET
+         participants_hash = EXCLUDED.participants_hash,
+         result_json = EXCLUDED.result_json,
+         routing = EXCLUDED.routing,
+         created_at = now()`,
+      [meetingId, hash, json, routing ?? null],
+    );
   }
 
   async upsertFeedback(meetingId, meetingToken, clientKey, meta) {

@@ -63,6 +63,17 @@ create table if not exists route_cache (
   primary key (from_id, to_id)
 );
 
+-- ---------------------------------------------------------------- 결과 스냅샷
+-- 참여자 구성이 그대로면 재계산 없이 이걸 그대로 돌려준다.
+-- 모임당 한 행만 두고(upsert) 구성이 바뀌면 해시가 어긋나 자연히 무시된다.
+create table if not exists meeting_results (
+  meeting_id        uuid primary key references meetings(id) on delete cascade,
+  participants_hash text not null,
+  result_json       text not null,
+  routing           text,
+  created_at        timestamptz not null default now()
+);
+
 -- ---------------------------------------------------------------- RLS
 -- 이 앱은 브라우저에서 Supabase 를 직접 부르지 않는다.
 -- 모든 접근은 연결 문자열을 쥔 백엔드(Render)를 거치므로
@@ -71,6 +82,7 @@ alter table meetings     enable row level security;
 alter table participants enable row level security;
 alter table events       enable row level security;
 alter table route_cache  enable row level security;
+alter table meeting_results enable row level security;
 -- (정책을 만들지 않으면 anon 키로는 아무것도 읽거나 쓸 수 없다 = 의도된 상태)
 
 -- ---------------------------------------------------------------- 정리
