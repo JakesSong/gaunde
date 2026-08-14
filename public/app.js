@@ -336,10 +336,26 @@
   $('toresult').addEventListener('click', function () { showResult(); });
 
   /* ------------------------------------------------------------ STEP 3 결과 */
-  function showResult() {
+  /** 이 브라우저에서 이 모임의 결과를 이미 본 적 있는가.
+   *  있으면 서버에도 스냅샷이 남아 있어 다시 계산하지 않는다. */
+  function seenKey() { return 'gaunde.seen.' + state.token; }
+
+  /**
+   * @param {object} [opts]
+   * @param {boolean} [opts.expectCached] 계산이 이미 끝나 있는 게 확실한 진입인지.
+   *   결과 링크로 다시 들어온 경우(?r=1)나 이 기기에서 한 번 본 모임이면 참.
+   *   "계산하는 중" 이라고 띄워놓고 곧바로 결과가 뜨면 사람을 헷갈리게 한다.
+   */
+  function showResult(opts) {
+    var expectCached = (opts && opts.expectCached) || !!localStorage.getItem(seenKey());
     go(2);
-    $('rtitle').textContent = '계산하는 중';
-    $('rlede').textContent = '…';
+    if (expectCached) {
+      $('rtitle').textContent = '결과 불러오는 중…';
+      $('rlede').textContent = '';
+    } else {
+      $('rtitle').textContent = '계산하는 중…';
+      $('rlede').textContent = '잠시만요, 후보 역을 하나씩 비교하고 있어요';
+    }
     $('alts').hidden = true;
     $('acts').hidden = true;
     $('fb').hidden = true;
@@ -348,6 +364,7 @@
     api('/api/meetings/' + encodeURIComponent(state.token) + '/result')
       .then(function (d) {
         state.result = d;
+        try { localStorage.setItem(seenKey(), '1'); } catch (e) { /* 사파리 프라이빗 등 */ }
         renderSpot(d.best);
 
         var spots = [d.best].concat(d.alternatives);
@@ -646,7 +663,8 @@
     state.myId = localStorage.getItem('gaunde.pid.' + token);
     if (params.get('r')) {
       stationsReady.then(function () {
-        refreshRoster().then(function () { showResult(); });
+        // 결과 링크로 들어온 것 = 이미 누군가 계산을 끝냈다는 뜻
+        refreshRoster().then(function () { showResult({ expectCached: true }); });
       });
     } else {
       enterMeeting(token);

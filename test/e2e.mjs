@@ -305,6 +305,41 @@ log('\n■ 결과 스냅샷 캐시');
 }
 
 /* ================================================================= */
+/* 이 블록은 결과를 여러 번 부르므로 "첫 호출은 캐시 미스" 를 보는
+   결과 스냅샷 캐시 블록보다 뒤에 있어야 한다. */
+log('\n■ 로딩 문구 — 진입 경로에 따라 달라진다');
+{
+  /* 처음 계산하는 진입은 "계산하는 중", 이미 계산된 걸 다시 보는 진입은 "불러오는 중".
+     응답이 오면 문구는 결과로 덮이므로, 누르는 즉시(응답 전) 무엇이 떠 있는지를 본다. */
+  const fresh = (await openPage('?m=' + token)).window;
+  await sleep(400);
+  fresh.document.getElementById('toresult').dispatchEvent(new fresh.MouseEvent('click', { bubbles: true }));
+  const firstText = text(fresh, 'rtitle');
+  check('첫 계산은 "계산하는 중…"', /계산하는 중/.test(firstText), firstText);
+  await waitFor(() => /\d+분/.test(text(fresh, 'rtitle')));
+
+  // 딥링크 재진입 (다른 기기여도 결과 링크면 이미 계산된 것)
+  const deep = (await openPage('?m=' + token + '&r=1')).window;
+  const deepText = await waitFor(() => /불러오는 중/.test(text(deep, 'rtitle')) || /\d+분/.test(text(deep, 'rtitle')))
+    ? text(deep, 'rtitle') : text(deep, 'rtitle');
+  check('딥링크 재진입은 "결과 불러오는 중…"',
+    /불러오는 중/.test(deepText) || /\d+분/.test(deepText), deepText);
+
+  // 같은 기기에서 두 번째로 결과 보기 → 이미 본 모임이므로 불러오는 중
+  const store = new Map();
+  const again1 = (await openPage('?m=' + token, { store })).window;
+  await sleep(400);
+  again1.document.getElementById('toresult').dispatchEvent(new again1.MouseEvent('click', { bubbles: true }));
+  await waitFor(() => /\d+분/.test(text(again1, 'rtitle')));
+
+  const again2 = (await openPage('?m=' + token, { store })).window;
+  await sleep(400);
+  again2.document.getElementById('toresult').dispatchEvent(new again2.MouseEvent('click', { bubbles: true }));
+  const againText = text(again2, 'rtitle');
+  check('같은 기기 재조회도 "불러오는 중…"', /불러오는 중/.test(againText), againText);
+}
+
+/* ================================================================= */
 log('\n■ 결과 피드백 (위치 A)');
 {
   const doc = lastWin.document;
