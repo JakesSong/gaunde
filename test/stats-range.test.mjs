@@ -127,7 +127,7 @@ describe('구간별 집계', () => {
   test('이벤트·퍼널·참여자 분포가 모두 구간 기준으로 다시 계산된다', async () => {
     const s = await store.getStats(day('2026-08-13'));
     assert.deepEqual(s.events, {
-      room_created: 3, origin_submitted: 0, result_viewed: 2, share_clicked: 1,
+      room_created: 3, origin_submitted: 0, result_viewed: 2, share_clicked: 1, result_feedback: 0,
     });
     assert.deepEqual(s.participantsHistogram, { 2: 1, 3: 1, 4: 1 }, 'b/c/d 의 참여자 수');
 
@@ -138,6 +138,35 @@ describe('구간별 집계', () => {
     assert.equal(steps['결과 도달'], 2);   // c, d
     assert.equal(steps['공유 클릭'], 1);   // d
     assert.ok(s.funnel.every((f, i, arr) => i === 0 || f.meetings <= arr[i - 1].meetings), '퍼널 단조 감소');
+  });
+
+  test('만족도 집계도 구간 필터를 탄다', async () => {
+    // 8/13 과 8/14 에 각각 피드백을 심는다
+    const fb = (id, at, value, reason, key) =>
+      store.db.prepare(
+        `INSERT INTO events (id, event, meeting_id, client_key, meta, created_at)
+         VALUES (?, 'result_feedback', 'c', ?, ?, ?)`,
+      ).run(id, key, JSON.stringify({ value, reason, station: '서울역' }), at);
+    fb('f1', '2026-08-13T03:00:00.000Z', 'good', null, 'k1');
+    fb('f2', '2026-08-13T04:00:00.000Z', 'bad', 'too_far', 'k2');
+    fb('f3', '2026-08-14T03:00:00.000Z', 'bad', 'many_transfers', 'k3');
+
+    const d13 = await store.getStats(day('2026-08-13'));
+    assert.deepEqual(
+      { good: d13.feedback.good, bad: d13.feedback.bad, pct: d13.feedback.satisfactionPercent },
+      { good: 1, bad: 1, pct: 50 });
+    assert.deepEqual(d13.feedback.badReasons, { too_far: 1 });
+
+    const d14 = await store.getStats(day('2026-08-14'));
+    assert.deepEqual({ good: d14.feedback.good, bad: d14.feedback.bad }, { good: 0, bad: 1 });
+    assert.deepEqual(d14.feedback.badReasons, { many_transfers: 1 });
+
+    const all = await store.getStats(null);
+    assert.equal(all.feedback.sample, 3);
+
+    const none = await store.getStats(day('2020-01-01'));
+    assert.equal(none.feedback.sample, 0);
+    assert.equal(none.feedback.satisfactionPercent, null, '표본이 없으면 비율은 null');
   });
 
   test('응답에 range 메타가 붙고, 없으면 null', async () => {

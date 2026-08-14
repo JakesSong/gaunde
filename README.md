@@ -214,6 +214,22 @@ Supabase 에서 SQL 을 따로 돌릴 필요가 없다.
 | `origin_submitted` | `POST /api/meetings/:token/participants` (서버) | 참여자 수 |
 | `result_viewed` | `GET /api/meetings/:token/result` 성공 시 (서버) | 완주율 |
 | `share_clicked` | 결과 화면 공유 버튼 → `POST /api/track` (프런트) | 의도 |
+| `result_feedback` | 결과 화면 만족/불만족 → `POST /api/track` (프런트) | 추천 품질 |
+
+**결과 피드백** — 요약카드 바로 아래에서 만족/불만족을 받고, 불만족이면 이유를 한 번 더 묻는다
+(너무 멀어요 / 환승 많아요 / 역이 이상해요 / 기타). 이유를 안 고르고 닫아도 `bad` 는 집계된다.
+
+모임·기기당 **한 표**만 세고 다시 누르면 마지막 값으로 갱신된다
+(`events(meeting_id, client_key)` 부분 유니크 인덱스 + upsert).
+`client_key` 는 기기 식별자 원본이 아니라 **모임별로 해시한 값**이라 모임을 가로질러
+같은 기기를 따라다닐 수 없다. 이유는 화면에 있는 칩 4개만 받는다(자유 입력 저장 없음).
+
+`/api/stats` 의 `feedback` 에 만족 비율·표본 수·불만족 이유 분포가 나온다.
+
+```json
+"feedback": { "good": 2, "bad": 2, "sample": 4,
+              "satisfactionPercent": 50, "badReasons": { "too_far": 1, "many_transfers": 1 } }
+```
 
 남기는 건 무슨 일이 언제 어느 모임에서 일어났는지 뿐이다.
 **IP·User-Agent·쿠키·기기 식별자는 저장하지 않고**, `meta` 에도 역 이름과 카운트만 들어간다

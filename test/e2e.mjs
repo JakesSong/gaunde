@@ -38,8 +38,10 @@ async function waitFor(fn, { timeout = 20000, step = 150 } = {}) {
   }
 }
 
-/** 브라우저 한 개를 띄운다 (한 명의 참여자에 해당) */
-async function openPage(search = '') {
+/** 브라우저 한 개를 띄운다 (한 명의 참여자에 해당).
+ *  localStorage 는 페이지마다 새로 만든다 = 참여자마다 다른 기기.
+ *  같은 기기를 재현하려면 store 를 넘겨 공유한다 (실제 브라우저의 오리진 단위 저장소처럼). */
+async function openPage(search = '', { store: sharedStore } = {}) {
   const vc = new VirtualConsole();
   vc.on('jsdomError', (e) => { if (!/Not implemented/.test(e.message)) console.error('  [page error]', e.message); });
 
@@ -52,7 +54,7 @@ async function openPage(search = '') {
       win.fetch = (input, init) => fetch(String(input).startsWith('http') ? input : BASE + input, init);
       win.scrollTo = () => {};
       Object.defineProperty(win.document, 'hidden', { value: false });
-      const store = new Map();
+      const store = sharedStore || new Map();
       Object.defineProperty(win, 'localStorage', {
         value: {
           getItem: (k) => (store.has(k) ? store.get(k) : null),
@@ -109,9 +111,12 @@ const PEOPLE = [
 ];
 
 let lastWin = null;
+let lastStore = null;
 for (const [name, query] of PEOPLE) {
-  const dom = await openPage('?m=' + token);
+  const store = new Map();
+  const dom = await openPage('?m=' + token, { store });
   const win = dom.window;
+  lastStore = store;
   await sleep(250);
 
   if (name === '규민') {
@@ -250,6 +255,62 @@ log('\n■ 같은 역 참여자 병합 + 수정/삭제');
   await sleep(500);
   const after = w.document.querySelectorAll('#rows .row').length;
   check('삭제가 반영됨', after === before - 1, `${before}명 → ${after}명`);
+}
+
+/* ================================================================= */
+log('\n■ 결과 피드백 (위치 A)');
+{
+  const doc = lastWin.document;
+  // 위치: 요약카드 아래, 맛집/카페 위
+  const order = [...doc.querySelectorAll('#s2 > *')].map((el) => el.id || el.className);
+  const iShot = order.findIndex((c) => c === 'shot');
+  const iFb = order.findIndex((c) => c === 'fb');
+  const iActs = order.findIndex((c) => c === 'acts');
+  check('피드백이 요약카드 아래·맛집 위에 있다', iShot < iFb && iFb < iActs, order.join(' → '));
+  check('피드백 블록 노출', doc.getElementById('fb').hidden === false);
+
+  const before = await fetch(`${BASE}/api/stats`).then((r) => r.json());
+
+  // 불만족 → 이유 칩 → 감사
+  doc.querySelector('#fbvote .fbbtn[data-v="bad"]').dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
+  await sleep(250);
+  check('불만족 누르면 이유를 묻는다', doc.getElementById('fbwhy').hidden === false, text(lastWin, 'fbq'));
+  check('투표 버튼은 사라진다', doc.getElementById('fbvote').hidden === true);
+
+  doc.querySelector('#fbwhy .fbchip[data-r="many_transfers"]').dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
+  await sleep(400);
+  check('이유 고르면 감사 인라인', /고마워요/.test(text(lastWin, 'fbq')), text(lastWin, 'fbq'));
+  check('이유 칩도 사라진다', doc.getElementById('fbwhy').hidden === true);
+
+  const after = await fetch(`${BASE}/api/stats`).then((r) => r.json());
+  check('result_feedback 집계됨', after.feedback.sample === before.feedback.sample + 1,
+    `표본 ${before.feedback.sample} → ${after.feedback.sample}`);
+  check('불만족 이유 분포 반영', (after.feedback.badReasons.many_transfers || 0) > (before.feedback.badReasons.many_transfers || 0),
+    JSON.stringify(after.feedback.badReasons));
+  check('만족도 필드 구성', typeof after.feedback.satisfactionPercent === 'number' || after.feedback.satisfactionPercent === null,
+    JSON.stringify(after.feedback));
+
+  // 다시 열면 이미 남긴 상태로 (같은 기기 = localStorage 공유)
+  const again = (await openPage('?m=' + token + '&r=1', { store: lastStore })).window;
+  await waitFor(() => again.document.querySelectorAll('#rmap .stop').length > 1);
+  await sleep(200);
+  check('다시 열어도 감사 상태 유지(같은 기기)', /고마워요/.test(again.document.getElementById('fbq').textContent),
+    again.document.getElementById('fbq').textContent);
+}
+
+log('\n■ 다이어그램 높이 압축');
+{
+  const stops = [...lastWin.document.querySelectorAll('#rmap .stop')];
+  const margins = stops.map((s) => {
+    const st = s.getAttribute('style') || '';
+    return Number((st.match(/margin-(?:top|bottom):\s*(\d+)px/) || [0, 0])[1]);
+  });
+  const total = margins.reduce((a, b) => a + b, 0);
+  log('        여백 합계 ' + total + 'px  (' + margins.join(', ') + ')');
+  check('여백 합계가 상한 안에 있다', total <= 200, total + 'px');
+  check('노드가 붙지 않는다(최소 여백)', margins.filter((m) => m > 0).every((m) => m >= 6), margins.join(','));
+  check('요금이 같은 줄에 (행 높이 축소)',
+    !/<br>/.test(lastWin.document.querySelector('#rmap .stop:not(.hit) .mins').innerHTML));
 }
 
 /* ================================================================= */

@@ -166,6 +166,28 @@
   .altrow span{color:var(--sub);font-size:12px;margin-left:auto}
   .altrow.on b::after{content:'  보는 중';font-size:10.5px;color:var(--line);font-weight:700;letter-spacing:.04em}
 
+  /* ---- 결과 피드백 ---- */
+  .fb{margin-top:14px}
+  .fbq{font-size:12.5px;font-weight:700;letter-spacing:-.02em;color:var(--sub);margin-bottom:8px}
+  .fbrow{display:flex;gap:8px;flex-wrap:wrap}
+  .fbbtn{
+    flex:1;min-width:0;font:inherit;font-size:13.5px;font-weight:600;letter-spacing:-.02em;
+    display:flex;align-items:center;justify-content:center;gap:6px;
+    padding:11px 10px;border:1.5px solid var(--rule);border-radius:12px;
+    background:#fff;color:var(--ink);cursor:pointer;
+  }
+  .fbbtn:hover{border-color:var(--line)}
+  .fbbtn:focus-visible{outline:3px solid var(--pin);outline-offset:2px}
+  .fbbtn span{font-size:15px;line-height:1}
+  .fbwhy{margin-top:8px}
+  .fbchip{
+    font:inherit;font-size:12.5px;letter-spacing:-.02em;padding:7px 11px;border-radius:999px;
+    border:1.5px solid var(--rule);background:#fff;color:var(--ink);cursor:pointer;
+  }
+  .fbchip:hover{border-color:var(--line)}
+  .fbchip:focus-visible{outline:3px solid var(--pin);outline-offset:2px}
+  .fbthanks{font-size:12.5px;letter-spacing:-.02em;color:var(--line);font-weight:700}
+
   /* ---- 결과 액션 ---- */
   .acts{display:flex;gap:8px;margin-top:12px}
   .act{flex:1;padding:12px 10px;font-size:13.5px;text-align:center;text-decoration:none;display:block}
@@ -290,6 +312,21 @@
         <div class="verdict" id="verdict"></div>
       </div>
 
+      <!-- 위치 A: 다이어그램·요약을 다 본 직후 -->
+      <div class="fb" id="fb" hidden>
+        <div class="fbq" id="fbq">이 추천, 도움이 됐어요?</div>
+        <div class="fbrow" id="fbvote">
+          <button class="fbbtn" type="button" data-v="good"><span>👍</span>만족</button>
+          <button class="fbbtn" type="button" data-v="bad"><span>👎</span>불만족</button>
+        </div>
+        <div class="fbrow fbwhy" id="fbwhy" hidden>
+          <button class="fbchip" type="button" data-r="too_far">너무 멀어요</button>
+          <button class="fbchip" type="button" data-r="many_transfers">환승 많아요</button>
+          <button class="fbchip" type="button" data-r="odd_station">역이 이상해요</button>
+          <button class="fbchip" type="button" data-r="other">기타</button>
+        </div>
+      </div>
+
       <div class="acts" id="acts" hidden>
         <a class="btn ghost act" id="food" target="_blank" rel="noopener">🍜 맛집</a>
         <a class="btn ghost act" id="cafe" target="_blank" rel="noopener">☕ 카페</a>
@@ -319,6 +356,6 @@
 
 <script src="./html2canvas.min.js?v=e87e5507"></script>
 <script src="./config.js?v=e877d385"></script>
-<script src="./app.js?v=f6efd416"></script>
+<script src="./app.js?v=0921e20c"></script>
 </body>
 </html>

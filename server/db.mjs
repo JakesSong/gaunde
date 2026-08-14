@@ -66,6 +66,7 @@ class SqliteStore {
       CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
     `);
     this.migrateParticipantIdentity();
+    this.migrateFeedback();
   }
 
   /* 참여자 식별을 이름 → client_id 로 옮긴다. (아래 PostgresStore 에 같은 설명이 있다) */
@@ -79,6 +80,28 @@ class SqliteStore {
       CREATE UNIQUE INDEX IF NOT EXISTS participants_meeting_client
         ON participants(meeting_id, client_id);
     `);
+  }
+
+  /* 결과 피드백은 모임·기기당 한 표만 세고, 마음이 바뀌면 마지막 값으로 갱신한다. */
+  migrateFeedback() {
+    const cols = this.db.prepare('PRAGMA table_info(events)').all();
+    if (!cols.some((c) => c.name === 'client_key')) {
+      this.db.exec('ALTER TABLE events ADD COLUMN client_key TEXT');
+    }
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS events_feedback_once
+        ON events(meeting_id, client_key) WHERE event = 'result_feedback';
+    `);
+  }
+
+  async upsertFeedback(meetingId, meetingToken, clientKey, meta) {
+    this.db.prepare(
+      `INSERT INTO events (id, event, meeting_id, meeting_token, client_key, meta)
+       VALUES (?, 'result_feedback', ?, ?, ?, ?)
+       ON CONFLICT(meeting_id, client_key) WHERE event = 'result_feedback'
+       DO UPDATE SET meta = excluded.meta,
+                     created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+    ).run(crypto.randomUUID(), meetingId, meetingToken ?? null, clientKey, JSON.stringify(meta));
   }
 
   async getRouteCache(fromId, toId, ttlDays) {
@@ -132,6 +155,11 @@ class SqliteStore {
       shared: one(`SELECT COUNT(DISTINCT e.meeting_id) AS c FROM events e
           JOIN meetings m ON m.id = e.meeting_id
           WHERE e.event = 'share_clicked' AND${win('m.created_at')}`, p),
+      // 만족도는 "그 기간에 남긴 피드백" 기준 (이벤트 발생 시각)
+      feedbackRows: rows(`SELECT json_extract(meta,'$.value') AS value,
+             json_extract(meta,'$.reason') AS reason, COUNT(*) AS c
+          FROM events WHERE event = 'result_feedback' AND${win('created_at')}
+          GROUP BY value, reason`, p),
     });
   }
 
@@ -270,12 +298,30 @@ class PostgresStore {
       CREATE UNIQUE INDEX IF NOT EXISTS participants_meeting_client
         ON participants(meeting_id, client_id);
     `);
+    /* 결과 피드백은 모임·기기당 한 표. 마음이 바뀌면 마지막 값으로 갱신한다.
+     * client_key 는 기기 식별자 원본이 아니라 모임별로 해시한 값이라
+     * 모임을 가로질러 같은 기기를 추적할 수 없다. */
+    await this.pool.query(`
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS client_key text;
+      CREATE UNIQUE INDEX IF NOT EXISTS events_feedback_once
+        ON events(meeting_id, client_key) WHERE event = 'result_feedback';
+    `);
     await this.pool.query(`
       ALTER TABLE meetings     ENABLE ROW LEVEL SECURITY;
       ALTER TABLE participants ENABLE ROW LEVEL SECURITY;
       ALTER TABLE events       ENABLE ROW LEVEL SECURITY;
       ALTER TABLE route_cache  ENABLE ROW LEVEL SECURITY;
     `);
+  }
+
+  async upsertFeedback(meetingId, meetingToken, clientKey, meta) {
+    await this.pool.query(
+      `INSERT INTO events (event, meeting_id, meeting_token, client_key, meta)
+       VALUES ('result_feedback', $1, $2, $3, $4)
+       ON CONFLICT (meeting_id, client_key) WHERE event = 'result_feedback'
+       DO UPDATE SET meta = EXCLUDED.meta, created_at = now()`,
+      [meetingId, meetingToken ?? null, clientKey, JSON.stringify(meta)],
+    );
   }
 
   async getRouteCache(fromId, toId, ttlDays) {
@@ -315,7 +361,7 @@ class PostgresStore {
     const win = (col) => (range ? ` ${col} >= $1::timestamptz AND ${col} < $2::timestamptz` : ' true');
     const p = range ? [range.fromIso ?? '-infinity', range.toIso ?? 'infinity'] : [];
 
-    const [meet, eventRows, sizeRows, reached, shared] = await Promise.all([
+    const [meet, eventRows, sizeRows, reached, shared, feedbackRows] = await Promise.all([
       q(`SELECT COUNT(*)::int AS c FROM meetings WHERE${win('created_at')}`, p),
       // 이벤트는 "그 기간에 일어난 것" 기준
       q(`SELECT event, COUNT(*)::int AS c FROM events WHERE${win('created_at')} GROUP BY event`, p),
@@ -330,6 +376,10 @@ class PostgresStore {
       q(`SELECT COUNT(DISTINCT e.meeting_id)::int AS c FROM events e
          JOIN meetings m ON m.id = e.meeting_id
          WHERE e.event = 'share_clicked' AND${win('m.created_at')}`, p),
+      // 만족도는 "그 기간에 남긴 피드백" 기준 (이벤트 발생 시각)
+      q(`SELECT meta->>'value' AS value, meta->>'reason' AS reason, COUNT(*)::int AS c
+         FROM events WHERE event = 'result_feedback' AND${win('created_at')}
+         GROUP BY value, reason`, p),
     ]);
     return shapeStats({
       range,
@@ -338,6 +388,7 @@ class PostgresStore {
       sizeRows,
       reachedResult: reached[0].c,
       shared: shared[0].c,
+      feedbackRows,
     });
   }
 
@@ -418,9 +469,9 @@ class PostgresStore {
  * 이벤트 총계와 "모임 단위" 퍼널을 나눠서 낸다.
  * 결과 화면은 새로고침하면 또 기록되므로 총계는 부풀 수 있고, 퍼널은 모임 중복을 제거한다. */
 const KPI_TARGET_PERCENT = 30;
-export const TRACKED_EVENTS = ['room_created', 'origin_submitted', 'result_viewed', 'share_clicked'];
+export const TRACKED_EVENTS = ['room_created', 'origin_submitted', 'result_viewed', 'share_clicked', 'result_feedback'];
 
-function shapeStats({ range, links, eventRows, sizeRows, reachedResult, shared }) {
+function shapeStats({ range, links, eventRows, sizeRows, reachedResult, shared, feedbackRows = [] }) {
   const events = Object.fromEntries(TRACKED_EVENTS.map((e) => [e, 0]));
   for (const r of eventRows) events[r.event] = Number(r.c);
 
@@ -460,6 +511,26 @@ function shapeStats({ range, links, eventRows, sizeRows, reachedResult, shared }
       { step: '공유 클릭',        meetings: shared,        percentOfLinks: pct(shared) },
     ],
     events,
+    /* 결과 만족도 — 모임·기기당 한 표(마지막 값 우선)로 이미 집계된 행들이다.
+       satisfactionPercent 는 good/(good+bad). 표본이 적으면 흔들리니 sample 도 같이 본다. */
+    feedback: (() => {
+      let good = 0, bad = 0;
+      const reasons = {};
+      for (const r of feedbackRows) {
+        const n = Number(r.c);
+        if (r.value === 'good') good += n;
+        else if (r.value === 'bad') {
+          bad += n;
+          if (r.reason) reasons[r.reason] = (reasons[r.reason] || 0) + n;
+        }
+      }
+      const sample = good + bad;
+      return {
+        good, bad, sample,
+        satisfactionPercent: sample ? +((good / sample) * 100).toFixed(1) : null,
+        badReasons: reasons,
+      };
+    })(),
     participantsHistogram: histogram,
     generatedAt: new Date().toISOString(),
   };

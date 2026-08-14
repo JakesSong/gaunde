@@ -4,6 +4,7 @@
  * 가입이 없으므로 모임 링크의 토큰 자체가 접근 권한이다.
  * 토큰을 아는 사람은 참여자 등록·조회·결과 계산을 할 수 있다.
  */
+import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import fs from 'node:fs';
@@ -102,7 +103,7 @@ function resolveStation(input) {
 /* ------------------------------------------------------------------ 라우트 */
 
 /** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
-const REV = 'odsay-degraded-8';
+const REV = 'feedback-9';
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, rev: REV, db: dbKind, stations: graph.stations.length,
@@ -301,9 +302,46 @@ app.post('/api/track', rateLimit(120, 60_000), asyncRoute(async (req, res) => {
   if (!TRACKED_EVENTS.includes(event)) return res.status(204).end();
 
   const meeting = token ? await store.getMeetingByToken(token) : null;
+
+  if (event === 'result_feedback') {
+    await recordFeedback(meeting, req.body);
+    return res.status(204).end();
+  }
+
   await track(event, meeting, { source: 'client' });
   res.status(204).end();
 }));
+
+/** 불만족 이유는 화면에 있는 칩만 받는다 (자유 입력을 그대로 저장하지 않는다) */
+const FEEDBACK_REASONS = ['too_far', 'many_transfers', 'odd_station', 'other'];
+
+/**
+ * 결과 만족/불만족.
+ *
+ * 모임·기기당 한 표만 세고, 다시 누르면 마지막 값으로 갱신한다.
+ * 기기 식별자는 그대로 저장하지 않고 모임별로 해시한다 — 같은 모임 안에서
+ * 중복만 걸러내면 되고, 모임을 가로질러 같은 기기를 따라다닐 이유는 없다.
+ */
+async function recordFeedback(meeting, body) {
+  if (!meeting) return;
+  const value = clean(body?.value, 8);
+  if (value !== 'good' && value !== 'bad') return;
+
+  const rawReason = clean(body?.reason, 24);
+  const reason = value === 'bad' && FEEDBACK_REASONS.includes(rawReason) ? rawReason : null;
+  const station = clean(body?.station, 40) || null;
+  const clientId = clean(body?.clientId, 64);
+  if (!clientId) return;
+
+  const clientKey = crypto.createHash('sha256')
+    .update(`${meeting.id}|${clientId}`).digest('hex').slice(0, 32);
+
+  try {
+    await store.upsertFeedback(meeting.id, meeting.token, clientKey, { value, reason, station });
+  } catch (e) {
+    console.error('[track] result_feedback', e.message);
+  }
+}
 
 /** KPI 한 방 조회 — 집계만 나가므로 개인정보는 포함되지 않는다.
  *
