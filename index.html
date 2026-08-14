@@ -17,6 +17,12 @@
     --line:#00A84D;
     --pin:#EF7C1C;
     --rule:#DDE2D8;
+    /* 피드백 박스 (안 A). 한곳에 모아둬서 테마를 바꿀 때 여기만 손보면 된다.
+       테두리는 앱 초록(--line)과 같은 값을 쓴다 — 다른 초록과 어긋나면 눈에 띈다. */
+    --fb-bg:#F0F9F3;
+    --fb-line:#00A84D;
+    --fb-ink:#2F6B47;
+    --fb-ok:#0B7A3B;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   /* hidden 속성은 UA 기본 display:none 으로 동작하는데, 작성자 규칙이 display 를 주면 덮인다.
@@ -166,27 +172,43 @@
   .altrow span{color:var(--sub);font-size:12px;margin-left:auto}
   .altrow.on b::after{content:'  보는 중';font-size:10.5px;color:var(--line);font-weight:700;letter-spacing:.04em}
 
-  /* ---- 결과 피드백 ---- */
-  .fb{margin-top:14px}
-  .fbq{font-size:12.5px;font-weight:700;letter-spacing:-.02em;color:var(--sub);margin-bottom:8px}
+  /* ---- 결과 피드백 (안 A: 점선 박스) ---- */
+  .fb{
+    margin-top:14px;
+    background:var(--fb-bg);
+    border:1px dashed var(--fb-line);
+    border-radius:12px;
+    padding:12px;
+  }
+  /* 연초록 배경 위에서는 기존 --sub(#7C857A) 가 3.56:1 로 대비가 모자란다.
+     박스를 넣으면서 글자색도 같이 올려 4.5:1 을 넘긴다. */
+  .fbq{font-size:12.5px;font-weight:700;letter-spacing:-.02em;color:var(--fb-ink);margin-bottom:9px}
   .fbrow{display:flex;gap:8px;flex-wrap:wrap}
   .fbbtn{
     flex:1;min-width:0;font:inherit;font-size:13.5px;font-weight:600;letter-spacing:-.02em;
     display:flex;align-items:center;justify-content:center;gap:6px;
-    padding:11px 10px;border:1.5px solid var(--rule);border-radius:12px;
-    background:#fff;color:var(--ink);cursor:pointer;
+    padding:11px 10px;border:1.5px solid rgba(0,168,77,.28);border-radius:12px;
+    background:var(--card);color:var(--ink);cursor:pointer;
   }
-  .fbbtn:hover{border-color:var(--line)}
+  .fbbtn:hover{border-color:var(--fb-line)}
   .fbbtn:focus-visible{outline:3px solid var(--pin);outline-offset:2px}
   .fbbtn span{font-size:15px;line-height:1}
-  .fbwhy{margin-top:8px}
+  .fbwhy{margin-top:9px}
   .fbchip{
     font:inherit;font-size:12.5px;letter-spacing:-.02em;padding:7px 11px;border-radius:999px;
-    border:1.5px solid var(--rule);background:#fff;color:var(--ink);cursor:pointer;
+    border:1.5px solid rgba(0,168,77,.28);background:var(--card);color:var(--ink);cursor:pointer;
   }
-  .fbchip:hover{border-color:var(--line)}
+  .fbchip:hover{border-color:var(--fb-line)}
   .fbchip:focus-visible{outline:3px solid var(--pin);outline-offset:2px}
-  .fbthanks{font-size:12.5px;letter-spacing:-.02em;color:var(--line);font-weight:700}
+  /* 감사 문구만 남을 때도 박스가 허전하지 않게 세로 여백을 조금 준다 */
+  .fbthanks{display:block;padding:2px 0;font-size:13px;letter-spacing:-.02em;
+    color:var(--fb-ok);font-weight:700}
+
+  /* 고대비 모드에서는 배경색이 무시되므로 점선 테두리만이라도 남긴다 */
+  @media (forced-colors: active){
+    .fb{border-color:CanvasText}
+    .fbbtn,.fbchip{border-color:CanvasText}
+  }
 
   /* ---- 결과 액션 ---- */
   .acts{display:flex;gap:8px;margin-top:12px}
