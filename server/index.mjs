@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MetroGraph, normalizeName } from './graph.mjs';
-import { openStore, TRACKED_EVENTS } from './db.mjs';
+import { openStore, TRACKED_EVENTS, deviceKey } from './db.mjs';
 import { createRouter } from './routing/index.mjs';
 import { TOLERANCE_MIN, FARE } from './config.mjs';
 import { parseRange } from './daterange.mjs';
@@ -85,7 +85,7 @@ function clean(str, maxLen) {
  *  집계가 1건인 걸 사람이 눈으로 보고서야 알았다.)
  * 그래서 실패를 세어 /api/health 와 /api/stats 에 같이 내보낸다 — 0 이 아니면 문제다.
  */
-const writeFailures = { events: 0, feedback: 0, lastError: null, lastAt: null };
+const writeFailures = { events: 0, feedback: 0, resultView: 0, lastError: null, lastAt: null };
 
 function noteWriteFailure(kind, event, e) {
   writeFailures[kind]++;
@@ -147,7 +147,7 @@ function resolveStation(input) {
 /* ------------------------------------------------------------------ 라우트 */
 
 /** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
-const REV = 'diagram-lines-13';
+const REV = 'result-view-1';
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, rev: REV, db: dbKind, stations: graph.stations.length,
@@ -402,6 +402,11 @@ app.post('/api/track', rateLimit(120, 60_000), asyncRoute(async (req, res) => {
     return res.status(204).end();
   }
 
+  if (event === 'result_view') {
+    await recordResultView(meeting, req.body);
+    return res.status(204).end();
+  }
+
   await track(event, meeting, { source: 'client' });
   res.status(204).end();
 }));
@@ -427,13 +432,34 @@ async function recordFeedback(meeting, body) {
   const clientId = clean(body?.clientId, 64);
   if (!clientId) return;
 
-  const clientKey = crypto.createHash('sha256')
-    .update(`${meeting.id}|${clientId}`).digest('hex').slice(0, 32);
-
   try {
-    await store.upsertFeedback(meeting.id, meeting.token, clientKey, { value, reason, station });
+    await store.upsertFeedback(meeting.id, meeting.token, deviceKey(meeting.id, clientId),
+      { value, reason, station });
   } catch (e) {
     noteWriteFailure('feedback', 'result_feedback', e);
+  }
+}
+
+/**
+ * 결과 화면을 실제로 본 기기.
+ *
+ * result_viewed 는 결과 API 가 불릴 때마다 쌓이는 모임 단위 조회수라
+ * "참여자 중 몇 명이 결과를 봤나" 를 셀 수 없다 — 한 사람이 새로고침해도 늘고,
+ * 세 명이 한 화면을 같이 봐도 1 이다. 그래서 사람(기기) 단위 신호를 따로 받는다.
+ *
+ * clientId 가 없으면 셀 수 없는 신호이므로 그냥 버린다(구버전 프런트·직접 호출).
+ * 프런트에도 localStorage 가드가 있지만 사파리 프라이빗 모드나 캐시 삭제로 뚫리므로
+ * 실제 중복 제거는 여기 유니크 인덱스가 책임진다.
+ */
+async function recordResultView(meeting, body) {
+  if (!meeting) return;
+  const clientId = clean(body?.clientId, 64);
+  if (!clientId) return;
+
+  try {
+    await store.upsertResultView(meeting.id, meeting.token, deviceKey(meeting.id, clientId));
+  } catch (e) {
+    noteWriteFailure('resultView', 'result_view', e);
   }
 }
 

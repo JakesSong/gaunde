@@ -127,7 +127,8 @@ describe('구간별 집계', () => {
   test('이벤트·퍼널·참여자 분포가 모두 구간 기준으로 다시 계산된다', async () => {
     const s = await store.getStats(day('2026-08-13'));
     assert.deepEqual(s.events, {
-      room_created: 3, origin_submitted: 0, result_viewed: 2, share_clicked: 1, result_feedback: 0,
+      room_created: 3, origin_submitted: 0, result_viewed: 2, result_view: 0,
+      share_clicked: 1, result_feedback: 0,
     });
     assert.deepEqual(s.participantsHistogram, { 2: 1, 3: 1, 4: 1 }, 'b/c/d 의 참여자 수');
 

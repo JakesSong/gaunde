@@ -340,6 +340,30 @@
    *  있으면 서버에도 스냅샷이 남아 있어 다시 계산하지 않는다. */
   function seenKey() { return 'gaunde.seen.' + state.token; }
 
+  /* 결과 화면을 실제로 본 사람(기기) 을 센다.
+   *
+   * 서버의 result_viewed 는 결과 API 가 불릴 때마다 쌓이는 모임 단위 조회수라
+   * 사람 수를 못 센다. 이건 화면이 실제로 그려진 시점에 기기·모임당 한 번만 보낸다.
+   * 가드는 피드백(fbKey)과 같은 방식이고, localStorage 가 막힌 브라우저에서 뚫려도
+   * 서버가 client_key 로 다시 걸러낸다. */
+  function rvKey() { return 'gaunde.rv.' + state.token; }
+
+  function trackResultView() {
+    if (!state.token) return;
+    try {
+      if (localStorage.getItem(rvKey())) return;
+      localStorage.setItem(rvKey(), '1');
+    } catch (e) { /* 사파리 프라이빗 등 — 서버 쪽 중복 제거에 맡긴다 */ }
+    try {
+      var body = JSON.stringify({ event: 'result_view', token: state.token, clientId: clientId });
+      if (navigator.sendBeacon && navigator.sendBeacon(API + '/api/track', new Blob([body], { type: 'application/json' }))) return;
+      fetch(API + '/api/track', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: body, keepalive: true,
+      }).catch(function () {});
+    } catch (e) { /* 측정은 기능보다 뒤다 */ }
+  }
+
   /**
    * @param {object} [opts]
    * @param {boolean} [opts.expectCached] 계산이 이미 끝나 있는 게 확실한 진입인지.
@@ -369,6 +393,7 @@
         state.result = d;
         try { localStorage.setItem(seenKey(), '1'); } catch (e) { /* 사파리 프라이빗 등 */ }
         renderSpot(d.best);
+        trackResultView();
 
         var spots = [d.best].concat(d.alternatives);
         $('altrows').innerHTML = spots.map(function (a, i) {

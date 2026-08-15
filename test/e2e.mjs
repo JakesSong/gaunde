@@ -456,6 +456,104 @@ log('\n■ 결과 피드백 (위치 A)');
     again.document.getElementById('fbq').textContent);
 }
 
+/* ================================================================= */
+log('\n■ 기기별 result_view — 사람 단위 결과 도달');
+{
+  const statsNow = () => fetch(`${BASE}/api/stats`).then((r) => r.json());
+  /* 측정은 fire-and-forget 이라 렌더 직후 바로 집계에 안 보일 수 있다.
+     고정 대기 대신 조건이 맞을 때까지 짧게 폴링한다(안 맞아도 타임아웃에 진행). */
+  async function waitStats(pred, timeout = 6000) {
+    const until = Date.now() + timeout;
+    for (;;) {
+      const s = await statsNow();
+      if (pred(s) || Date.now() > until) return s;
+      await sleep(200);
+    }
+  }
+
+  const before = await statsNow();
+  check('/api/stats 에 참여자 관점 지표가 있다', !!before.resultViewers, JSON.stringify(before.resultViewers));
+  check('지표 정의가 응답에 적혀 있다',
+    /result_view/.test(before.resultViewers.definition.numerator) &&
+    /참여자/.test(before.resultViewers.definition.denominator),
+    JSON.stringify(before.resultViewers.definition));
+
+  /* 새 기기 한 대가 결과 화면을 본다 (store 를 새로 주면 clientId 도 새로 생긴다) */
+  const deviceA = new Map();
+  const a = (await openPage('?m=' + token + '&r=1', { store: deviceA })).window;
+  await waitFor(() => a.document.querySelectorAll('#rmap .stop').length > 1);
+  const after1 = await waitStats((s) => s.events.result_view === before.events.result_view + 1);
+  check('결과 렌더 시 result_view 1건 기록',
+    after1.events.result_view === before.events.result_view + 1,
+    `${before.events.result_view} → ${after1.events.result_view}`);
+  check('고유 기기 수도 1 늘어난다',
+    after1.resultViewers.viewerDevices === before.resultViewers.viewerDevices + 1,
+    `${before.resultViewers.viewerDevices} → ${after1.resultViewers.viewerDevices}`);
+  check('가드 키가 기기에 남는다', deviceA.get('gaunde.rv.' + token) === '1',
+    [...deviceA.keys()].join(', '));
+
+  /* 같은 기기가 다시 봐도 사람 수는 그대로여야 한다 (프런트 가드) */
+  const a2 = (await openPage('?m=' + token + '&r=1', { store: deviceA })).window;
+  await waitFor(() => a2.document.querySelectorAll('#rmap .stop').length > 1);
+  await sleep(700);
+  const after2 = await statsNow();
+  check('같은 기기 재조회는 사람 수를 늘리지 않는다',
+    after2.events.result_view === after1.events.result_view,
+    `${after1.events.result_view} → ${after2.events.result_view}`);
+
+  /* 가드를 지운 같은 기기 = localStorage 가 막힌 브라우저. 서버가 다시 걸러내야 한다. */
+  deviceA.delete('gaunde.rv.' + token);
+  const a3 = (await openPage('?m=' + token + '&r=1', { store: deviceA })).window;
+  await waitFor(() => a3.document.querySelectorAll('#rmap .stop').length > 1);
+  await sleep(700);
+  const after3 = await statsNow();
+  check('가드가 뚫려도 서버가 중복을 막는다 (client_key 유니크)',
+    after3.events.result_view === after1.events.result_view,
+    `${after1.events.result_view} → ${after3.events.result_view}`);
+
+  /* 다른 기기는 따로 센다 */
+  const b = (await openPage('?m=' + token + '&r=1', { store: new Map() })).window;
+  await waitFor(() => b.document.querySelectorAll('#rmap .stop').length > 1);
+  const after4 = await waitStats((s) => s.events.result_view === after3.events.result_view + 1);
+  check('다른 기기는 따로 센다',
+    after4.events.result_view === after3.events.result_view + 1,
+    `${after3.events.result_view} → ${after4.events.result_view}`);
+
+  /* 등록한 참여자가 결과를 본 경우 — 분자에 사람으로 잡혀야 한다.
+     (위 두 기기는 출발역을 등록하지 않았으므로 기기 수에만 들어간다) */
+  const rv = after4.resultViewers;
+  check('참여자 중 결과를 본 사람이 잡힌다', rv.viewedParticipants >= 1,
+    `${rv.viewedParticipants}/${rv.participants}명`);
+  check('분자가 분모를 넘지 않는다', rv.viewedParticipants <= rv.participants,
+    `${rv.viewedParticipants} ≤ ${rv.participants}`);
+  check('비율이 0~100 안에 있다', rv.percent >= 0 && rv.percent <= 100, rv.percent + '%');
+  check('구경만 한 기기는 기기 수에만 들어간다', rv.viewerDevices >= rv.viewedParticipants,
+    `기기 ${rv.viewerDevices} ≥ 사람 ${rv.viewedParticipants}`);
+  log(`        참여자 ${rv.participants}명 중 ${rv.viewedParticipants}명이 결과 확인 (${rv.percent}%), 고유 기기 ${rv.viewerDevices}대`);
+
+  check('result_view 쓰기 실패 0건', after4.writeFailures.resultView === 0,
+    JSON.stringify(after4.writeFailures));
+
+  /* 모임 단위 조회수는 그대로 살아 있어야 한다 (대체가 아니라 추가) */
+  check('기존 result_viewed 는 그대로 쌓인다', after4.events.result_viewed > 0,
+    after4.events.result_viewed + '건');
+  check('둘은 서로 다른 지표', after4.events.result_viewed !== after4.events.result_view ||
+    after4.events.result_view === 0,
+    `viewed ${after4.events.result_viewed} vs view ${after4.events.result_view}`);
+
+  /* 구간 필터 호환 */
+  const today = new Date().toISOString().slice(0, 10);
+  const ranged = await fetch(`${BASE}/api/stats?from=2020-01-01&to=2099-01-01`).then((r) => r.json());
+  check('구간 필터에서도 지표가 나온다', ranged.resultViewers.participants > 0,
+    JSON.stringify(ranged.resultViewers).slice(0, 120));
+  check('range.basis 에 기준이 명시된다', ranged.range.basis.resultViewers === 'meetings.created_at',
+    JSON.stringify(ranged.range.basis));
+  const empty = await fetch(`${BASE}/api/stats?from=2019-01-01&to=2019-01-02`).then((r) => r.json());
+  check('빈 구간은 0 으로 안전하게', empty.resultViewers.participants === 0 && empty.resultViewers.percent === 0,
+    JSON.stringify(empty.resultViewers));
+  log('        (오늘 = ' + today + ')');
+}
+
 log('\n■ 다이어그램 높이 압축');
 {
   const stops = [...lastWin.document.querySelectorAll('#rmap .stop')];
@@ -482,8 +580,8 @@ check('share_clicked 기록됨',
   after.events.share_clicked === before.events.share_clicked + 1,
   `${before.events.share_clicked} → ${after.events.share_clicked}`);
 
-log('\n■ 이벤트 4종이 모두 쌓였는지');
-for (const ev of ['room_created', 'origin_submitted', 'result_viewed', 'share_clicked']) {
+log('\n■ 이벤트 5종이 모두 쌓였는지');
+for (const ev of ['room_created', 'origin_submitted', 'result_viewed', 'result_view', 'share_clicked']) {
   check(`${ev}`, after.events[ev] > 0, String(after.events[ev]) + '건');
 }
 

@@ -212,9 +212,52 @@ Supabase 에서 SQL 을 따로 돌릴 필요가 없다.
 |---|---|---|
 | `room_created` | `POST /api/meetings` (서버) | KPI 분모 |
 | `origin_submitted` | `POST /api/meetings/:token/participants` (서버) | 참여자 수 |
-| `result_viewed` | `GET /api/meetings/:token/result` 성공 시 (서버) | 완주율 |
+| `result_viewed` | `GET /api/meetings/:token/result` 성공 시 (서버) | 모임 단위 조회수 |
+| `result_view` | 결과 화면이 실제로 그려진 시점 → `POST /api/track` (프런트) | **사람 단위** 결과 도달 |
 | `share_clicked` | 결과 화면 공유 버튼 → `POST /api/track` (프런트) | 의도 |
 | `result_feedback` | 결과 화면 만족/불만족 → `POST /api/track` (프런트) | 추천 품질 |
+
+### 결과를 "몇 명이" 봤나 — `result_view`
+
+`result_viewed` 는 결과 API 가 불릴 때마다 쌓이는 **모임 단위 조회수**라 사람 수를 못 센다.
+한 사람이 새로고침만 해도 늘고, 세 명이 한 화면을 같이 봐도 1 이다.
+그래서 화면이 실제로 렌더된 시점에 **기기·모임당 한 번만** 보내는 신호를 따로 둔다.
+(`result_viewed` 는 그대로 둔다 — 대체가 아니라 추가다.)
+
+중복 제거는 두 겹이다. 프런트는 `localStorage['gaunde.rv.<토큰>']` 으로 막고,
+사파리 프라이빗 모드처럼 저장소가 막힌 브라우저에서 뚫리면
+서버의 `events(meeting_id, client_key)` 부분 유니크 인덱스가 다시 막는다
+(`events_resultview_once`, 두 번째부터는 `DO NOTHING` — 처음 본 시각을 남긴다).
+`clientId` 가 없는 요청은 셀 수 없는 신호라 조용히 버린다.
+
+`/api/stats` 의 `resultViewers` 로 나온다.
+
+```json
+"resultViewers": {
+  "name": "참여자 중 결과 화면을 본 사람 비율",
+  "definition": {
+    "numerator":   "참여자 중 deviceKey(meeting_id, client_id) 가 같은 모임의 result_view.client_key 로 남은 사람 수",
+    "denominator": "그 기간에 만들어진 모임의 참여자 수",
+    "basis": "meetings.created_at (코호트)"
+  },
+  "participants": 12, "viewedParticipants": 7, "percent": 58.3,
+  "viewerDevices": 9, "participantsWithoutClientId": 0
+}
+```
+
+| 필드 | 뜻 |
+|---|---|
+| `participants` | **분모** — 그 기간에 만들어진 모임의 참여자 수 |
+| `viewedParticipants` | **분자** — 그중 자기 기기로 결과 화면을 본 사람 수 |
+| `percent` | `viewedParticipants / participants × 100` |
+| `viewerDevices` | 참고값 — 결과를 본 고유 기기 수. 등록하지 않고 링크만 열어본 사람도 들어가므로 분자보다 클 수 있다 |
+| `participantsWithoutClientId` | `client_id` 가 없는 옛 참여자 수. 대조할 값이 없어 분자에 절대 못 든다 |
+
+대조는 SQL 이 아니라 JS 에서 한다 — SQLite 에는 `sha256()` 이 없어 방언마다 다른 SQL 을
+쓰게 되기 때문이다. 해시 규칙은 `deviceKey()` 하나로 두어 쓰는 쪽과 대조하는 쪽이 갈리지 않게 했다
+(갈리면 대조가 조용히 0 이 되고, 그건 눈치채기 가장 어려운 실패다).
+
+퍼널의 "결과 도달" 은 **모임 수**, 이쪽은 **사람 수**라 분모가 다르다. 섞어 읽지 않도록 이름을 나눴다.
 
 **결과 피드백** — 요약카드 바로 아래에서 만족/불만족을 받고, 불만족이면 이유를 한 번 더 묻는다
 (너무 멀어요 / 환승 많아요 / 역이 이상해요 / 기타). 이유를 안 고르고 닫아도 `bad` 는 집계된다.
@@ -258,11 +301,12 @@ curl -s 'https://<주소>/api/stats?from=2026-08-13&to=2026-08-14' | jq '.range,
 "range": {
   "from": "2026-08-13", "to": "2026-08-14", "tz": "Asia/Seoul", "toExclusive": true,
   "fromUtc": "2026-08-12T15:00:00.000Z", "toUtc": "2026-08-13T15:00:00.000Z",
-  "basis": { "kpi": "meetings.created_at", "funnel": "meetings.created_at", "events": "events.created_at" }
+  "basis": { "kpi": "meetings.created_at", "funnel": "meetings.created_at",
+             "events": "events.created_at", "resultViewers": "meetings.created_at" }
 }
 ```
 
-기준이 둘로 갈리는 게 의도다. **KPI·퍼널·참여자 분포는 "그 기간에 만들어진 모임" 코호트**라
+기준이 둘로 갈리는 게 의도다. **KPI·퍼널·참여자 분포·`resultViewers` 는 "그 기간에 만들어진 모임" 코호트**라
 23:50 에 만든 링크에 친구가 다음 날 00:10 에 들어와도 그 모임의 성과로 친다.
 **`events` 는 "그 기간에 일어난 이벤트"** 다. 둘을 섞으면 퍼널이 100%를 넘는다.
 

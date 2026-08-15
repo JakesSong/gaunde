@@ -74,6 +74,7 @@ class SqliteStore {
     `);
     this.migrateParticipantIdentity();
     this.migrateFeedback();
+    this.migrateResultView();
     this.migrateRouteTransfers();
   }
 
@@ -110,6 +111,23 @@ class SqliteStore {
        DO UPDATE SET meta = excluded.meta,
                      created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
     ).run(crypto.randomUUID(), meetingId, meetingToken ?? null, clientKey, JSON.stringify(meta));
+  }
+
+  /* 결과 화면을 실제로 본 기기 — 모임·기기당 한 행. (PostgresStore 에 같은 설명이 있다) */
+  migrateResultView() {
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS events_resultview_once
+        ON events(meeting_id, client_key) WHERE event = 'result_view';
+    `);
+  }
+
+  async upsertResultView(meetingId, meetingToken, clientKey) {
+    this.db.prepare(
+      `INSERT INTO events (id, event, meeting_id, meeting_token, client_key)
+       VALUES (?, 'result_view', ?, ?, ?)
+       ON CONFLICT(meeting_id, client_key) WHERE event = 'result_view'
+       DO NOTHING`,
+    ).run(crypto.randomUUID(), meetingId, meetingToken ?? null, clientKey);
   }
 
   /* 결과 스냅샷 — 모임당 한 행만 둔다(최신이 이긴다).
@@ -200,6 +218,16 @@ class SqliteStore {
              json_extract(meta,'$.reason') AS reason, COUNT(*) AS c
           FROM events WHERE event = 'result_feedback' AND${win('created_at')}
           GROUP BY value, reason`, p),
+      /* 사람 단위 지표의 재료. 해시 대조는 SQL 이 아니라 JS 에서 한다 —
+         SQLite 에는 sha256() 이 없어서 방언마다 다른 SQL 을 쓰게 되기 때문이다.
+         (분모) 그 기간에 만들어진 모임의 참여자 전원 */
+      viewerParticipantRows: rows(`SELECT p.meeting_id AS meeting_id, p.client_id AS client_id
+          FROM participants p JOIN meetings m ON m.id = p.meeting_id
+          WHERE${win('m.created_at')}`, p),
+      /* (분자 후보) 그 모임들에 남은 result_view 기기 키 */
+      viewerKeyRows: rows(`SELECT DISTINCT e.meeting_id AS meeting_id, e.client_key AS client_key
+          FROM events e JOIN meetings m ON m.id = e.meeting_id
+          WHERE e.event = 'result_view' AND e.client_key IS NOT NULL AND${win('m.created_at')}`, p),
     });
   }
 
@@ -354,6 +382,13 @@ class PostgresStore {
       CREATE UNIQUE INDEX IF NOT EXISTS events_feedback_once
         ON events(meeting_id, client_key) WHERE event = 'result_feedback';
     `);
+    /* 결과 화면을 실제로 본 기기 — 모임·기기당 한 행만 남긴다.
+     * result_viewed(모임 단위 조회수)로는 "몇 명이 봤나" 를 셀 수 없어서 따로 둔다.
+     * 여기서도 원본 기기 식별자가 아니라 모임별 해시(client_key)만 저장한다. */
+    await this.pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS events_resultview_once
+        ON events(meeting_id, client_key) WHERE event = 'result_view';
+    `);
     await this.pool.query(`
       ALTER TABLE meetings     ENABLE ROW LEVEL SECURITY;
       ALTER TABLE participants ENABLE ROW LEVEL SECURITY;
@@ -396,6 +431,17 @@ class PostgresStore {
     );
   }
 
+  /* 두 번째부터는 아무것도 하지 않는다 — 처음 본 시각을 그대로 둔다. */
+  async upsertResultView(meetingId, meetingToken, clientKey) {
+    await this.pool.query(
+      `INSERT INTO events (event, meeting_id, meeting_token, client_key)
+       VALUES ('result_view', $1, $2, $3)
+       ON CONFLICT (meeting_id, client_key) WHERE event = 'result_view'
+       DO NOTHING`,
+      [meetingId, meetingToken ?? null, clientKey],
+    );
+  }
+
   async getRouteCache(fromId, toId, ttlDays) {
     const { rows } = await this.pool.query(
       `SELECT minutes, fare, transfers FROM route_cache
@@ -434,7 +480,8 @@ class PostgresStore {
     const win = (col) => (range ? ` ${col} >= $1::timestamptz AND ${col} < $2::timestamptz` : ' true');
     const p = range ? [range.fromIso ?? '-infinity', range.toIso ?? 'infinity'] : [];
 
-    const [meet, eventRows, sizeRows, reached, shared, feedbackRows] = await Promise.all([
+    const [meet, eventRows, sizeRows, reached, shared, feedbackRows,
+      viewerParticipantRows, viewerKeyRows] = await Promise.all([
       q(`SELECT COUNT(*)::int AS c FROM meetings WHERE${win('created_at')}`, p),
       // 이벤트는 "그 기간에 일어난 것" 기준
       q(`SELECT event, COUNT(*)::int AS c FROM events WHERE${win('created_at')} GROUP BY event`, p),
@@ -453,6 +500,16 @@ class PostgresStore {
       q(`SELECT meta->>'value' AS value, meta->>'reason' AS reason, COUNT(*)::int AS c
          FROM events WHERE event = 'result_feedback' AND${win('created_at')}
          GROUP BY value, reason`, p),
+      /* 사람 단위 지표의 재료. 해시 대조는 SQL 이 아니라 JS 에서 한다 —
+         SQLite 에는 sha256() 이 없어 여기서만 되는 SQL 을 쓰게 되기 때문이다.
+         (분모) 그 기간에 만들어진 모임의 참여자 전원 */
+      q(`SELECT p.meeting_id::text AS meeting_id, p.client_id AS client_id
+         FROM participants p JOIN meetings m ON m.id = p.meeting_id
+         WHERE${win('m.created_at')}`, p),
+      /* (분자 후보) 그 모임들에 남은 result_view 기기 키 */
+      q(`SELECT DISTINCT e.meeting_id::text AS meeting_id, e.client_key AS client_key
+         FROM events e JOIN meetings m ON m.id = e.meeting_id
+         WHERE e.event = 'result_view' AND e.client_key IS NOT NULL AND${win('m.created_at')}`, p),
     ]);
     return shapeStats({
       range,
@@ -462,6 +519,8 @@ class PostgresStore {
       reachedResult: reached[0].c,
       shared: shared[0].c,
       feedbackRows,
+      viewerParticipantRows,
+      viewerKeyRows,
     });
   }
 
@@ -542,9 +601,61 @@ class PostgresStore {
  * 이벤트 총계와 "모임 단위" 퍼널을 나눠서 낸다.
  * 결과 화면은 새로고침하면 또 기록되므로 총계는 부풀 수 있고, 퍼널은 모임 중복을 제거한다. */
 const KPI_TARGET_PERCENT = 30;
-export const TRACKED_EVENTS = ['room_created', 'origin_submitted', 'result_viewed', 'share_clicked', 'result_feedback'];
+export const TRACKED_EVENTS = ['room_created', 'origin_submitted', 'result_viewed', 'result_view', 'share_clicked', 'result_feedback'];
 
-function shapeStats({ range, links, eventRows, sizeRows, reachedResult, shared, feedbackRows = [] }) {
+/**
+ * 기기 식별자를 모임별로 해시한 값 (events.client_key).
+ *
+ * 원본 clientId 는 저장하지 않는다. 모임 id 를 섞으므로 같은 기기라도 모임마다
+ * 다른 값이 되어, 모임을 가로질러 한 기기를 따라다닐 수 없다.
+ *
+ * 쓰는 쪽(server/index.mjs)과 대조하는 쪽(shapeStats)이 같은 함수를 쓰게 여기 둔다.
+ * 규칙이 한 글자라도 갈리면 대조가 조용히 0 이 되고, 그건 눈치채기 어렵다.
+ */
+export function deviceKey(meetingId, clientId) {
+  return crypto.createHash('sha256').update(`${meetingId}|${clientId}`).digest('hex').slice(0, 32);
+}
+
+/**
+ * 참여자 관점 지표 — "참여자 중 결과 화면을 실제로 본 사람 비율".
+ *
+ *   분모 = 그 기간에 만들어진 모임(코호트)의 참여자 수
+ *   분자 = 그중 자기 기기로 결과 화면을 본 사람 수
+ *          (참여자의 client_id 로 만든 deviceKey 가 같은 모임의 result_view 에 있으면 본 것)
+ *
+ * result_viewed 는 요청 한 건마다 쌓이는 모임 단위 조회수라 사람 수를 못 센다.
+ * 새로고침 한 번에 하나씩 늘고, 세 명이 한 화면을 같이 봐도 1 이다. 그래서 따로 센다.
+ *
+ * client_id 가 없는 옛 참여자는 대조할 값이 없어 분자에 절대 들지 못한다.
+ * 조용히 비율만 떨어뜨리면 오해하기 쉬우므로 그 수도 같이 내보낸다.
+ */
+function shapeResultViewers(participantRows, keyRows) {
+  const seen = new Set(keyRows.map((r) => `${r.meeting_id}|${r.client_key}`));
+  let participants = 0, viewed = 0, unmatchable = 0;
+  for (const r of participantRows) {
+    participants++;
+    if (!r.client_id) { unmatchable++; continue; }
+    if (seen.has(`${r.meeting_id}|${deviceKey(r.meeting_id, r.client_id)}`)) viewed++;
+  }
+  return {
+    name: '참여자 중 결과 화면을 본 사람 비율',
+    definition: {
+      numerator: '참여자 중 deviceKey(meeting_id, client_id) 가 같은 모임의 result_view.client_key 로 남은 사람 수',
+      denominator: '그 기간에 만들어진 모임의 참여자 수',
+      basis: 'meetings.created_at (코호트)',
+    },
+    participants,
+    viewedParticipants: viewed,
+    percent: participants ? +((viewed / participants) * 100).toFixed(1) : 0,
+    /* 참고값 — 결과를 본 고유 기기 수. 출발역을 등록하지 않고 링크만 열어본 사람도 들어가므로
+       viewedParticipants 보다 클 수 있다. 분자로 쓰지 않는다. */
+    viewerDevices: keyRows.length,
+    participantsWithoutClientId: unmatchable,
+  };
+}
+
+function shapeStats({ range, links, eventRows, sizeRows, reachedResult, shared, feedbackRows = [],
+  viewerParticipantRows = [], viewerKeyRows = [] }) {
   const events = Object.fromEntries(TRACKED_EVENTS.map((e) => [e, 0]));
   for (const r of eventRows) events[r.event] = Number(r.c);
 
@@ -566,7 +677,8 @@ function shapeStats({ range, links, eventRows, sizeRows, reachedResult, shared, 
     range: range
       ? { from: range.from, to: range.to, tz: range.tz, toExclusive: range.toExclusive,
           fromUtc: range.fromIso, toUtc: range.toIso,
-          basis: { kpi: 'meetings.created_at', funnel: 'meetings.created_at', events: 'events.created_at' } }
+          basis: { kpi: 'meetings.created_at', funnel: 'meetings.created_at',
+            events: 'events.created_at', resultViewers: 'meetings.created_at' } }
       : null,
     kpi: {
       name: '생성된 링크 중 참여자 3명 이상 모인 비율',
@@ -604,6 +716,9 @@ function shapeStats({ range, links, eventRows, sizeRows, reachedResult, shared, 
         badReasons: reasons,
       };
     })(),
+    /* 사람 단위 결과 도달 — funnel 의 "결과 도달"(모임 단위)과 분모가 다르다.
+       퍼널은 모임 수, 이쪽은 사람 수다. 섞어 읽지 않도록 이름을 나눠 둔다. */
+    resultViewers: shapeResultViewers(viewerParticipantRows, viewerKeyRows),
     participantsHistogram: histogram,
     generatedAt: new Date().toISOString(),
   };
