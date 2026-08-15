@@ -54,9 +54,12 @@
     display:flex;align-items:center;justify-content:space-between;gap:10px;
   }
   .eyebrow{font-size:10.5px;font-weight:700;letter-spacing:.14em;color:var(--sub)}
-  .steps{display:flex;gap:5px}
-  .dot{width:6px;height:6px;border-radius:50%;background:var(--rule);transition:background .25s,transform .25s}
-  .dot.on{background:var(--line);transform:scale(1.35)}
+  /* 진행 표시. 예전에는 동그란 점 3개였는데 우측 상단에 놓이니 "⋯ 메뉴" 로 읽혀서
+     눌러도 아무 일이 없다는 피드백이 반복됐다. 눌리는 것처럼 보이지 않게
+     납작한 막대로 바꾼다 — 같은 정보를 주면서 메뉴로는 안 보인다. */
+  .steps{display:flex;gap:3px}
+  .dot{width:14px;height:3px;border-radius:2px;background:var(--rule);transition:background .25s}
+  .dot.on{background:var(--line)}
 
   .screen{padding:22px 20px 24px;display:none;flex:1;flex-direction:column}
   .screen.on{display:flex;animation:rise .34s cubic-bezier(.2,.7,.3,1)}
@@ -138,8 +141,11 @@
      애니메이션이 진행되지 않는 환경(iOS 저전력 모드 등)에서 그대로 멈춰 안 보인다.
      실제로 배포본에서 4개 노드가 2.5초 뒤에도 opacity 0 으로 굳어 있었다.
      transform 만 쓰면 최악의 경우에도 "6px 밀린 채 보이는" 상태라 안전하다. */
-  .stop{position:relative;display:flex;align-items:center;gap:12px;padding:6px 0;
-    animation:pop .5s backwards}
+  /* .stop 은 이제 "한 줄 + 접힌 경로" 를 함께 담는 상자다.
+     가로 배치는 .stopmain 이 맡는다 — 그래야 아래에 경로 상세를 붙여도 줄이 안 깨진다.
+     .node 의 offsetParent 는 여전히 .stop(position:relative) 이라 레일 색칠 계산은 그대로다. */
+  .stop{position:relative;animation:pop .5s backwards}
+  .stopmain{display:flex;align-items:center;gap:12px;padding:6px 0}
   .stop:nth-child(3){animation-delay:.25s}
   .stop:nth-child(4){animation-delay:.4s}
   .stop:nth-child(5){animation-delay:.55s}
@@ -160,11 +166,58 @@
      375px 에서 이 줄이 두 줄이 되는 건 어쩔 수 없지만, 끊기는 자리는 · 앞뒤여야 한다. */
   .stop .mins{width:calc(50% - 16px);font-size:12.5px;color:var(--sub);letter-spacing:-.02em;
     word-break:keep-all}
-  .stop.hit{padding:16px 0}
+  .stop.hit .stopmain{padding:16px 0}
   .stop.hit .node{width:26px;height:26px;box-shadow:0 0 0 6px rgba(239,124,28,.14)}
   .stop.hit .node::after{inset:5px}
   .stop.hit .who{font-size:19px;font-weight:800;letter-spacing:-.045em}
   .stop.hit .mins{font-size:12px;font-weight:700;color:var(--pin);letter-spacing:.04em}
+
+  /* ---- 각자 경로 펼치기 (참여자 줄을 누르면) ---- */
+  .stop.can .stopmain{cursor:pointer;border-radius:10px}
+  .stop.can:hover .who small{color:var(--line)}
+  .stop.can:focus-visible{outline:3px solid var(--pin);outline-offset:2px;border-radius:10px}
+  .who .more{font-size:10.5px;color:var(--sub);letter-spacing:-.01em}
+  .stop.open .who .more{color:var(--line);font-weight:700}
+  .legs{margin:0 0 8px;padding:9px 11px;border:1px solid var(--rule);border-radius:10px;
+    background:#FBFCFA;font-size:11.5px;line-height:1.55;color:#4A524A;letter-spacing:-.02em}
+  .legs .leg{display:flex;align-items:flex-start;gap:7px;padding:2px 0}
+  .legs .leg i{width:8px;height:8px;border-radius:50%;background:var(--c);margin-top:5px;flex:none}
+  .legs .leg b{font-weight:700;color:var(--ink)}
+  .legs .tf{padding:1px 0 1px 15px;color:var(--sub)}
+  .legs .cap{display:block;margin-top:5px;color:var(--sub);font-size:10.5px;line-height:1.5}
+
+  /* ---- 핵심 수치 · 계산 기준 배지 ---- */
+  .keys{display:flex;gap:8px;margin:0 0 10px}
+  .keys div{flex:1;min-width:0;background:var(--paper);border-radius:12px;padding:10px;text-align:center}
+  .keys b{display:block;font-size:20px;font-weight:800;letter-spacing:-.045em;line-height:1.15;
+    word-break:keep-all}
+  .keys span{display:block;font-size:10.5px;color:var(--sub);margin-top:3px;letter-spacing:-.01em}
+  .keys .hi b{color:var(--pin)}
+
+  /* 시간이 어디서 나온 값인지. 요금만 근사치라고 적혀 있고 시간은 확정처럼 보인다는
+     피드백이 있어, 실시간/근사를 같은 자리에서 구분한다. */
+  .basis{display:inline-flex;align-items:center;gap:6px;margin:0 0 12px;padding:5px 10px;
+    border-radius:999px;border:1px solid var(--rule);background:#F4F6F1;color:#4A524A;
+    font-size:11px;line-height:1.4;letter-spacing:-.01em}
+  .basis::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--sub);flex:none}
+  .basis.live{background:var(--fb-bg);border-color:rgba(0,168,77,.35);color:var(--fb-ink)}
+  .basis.live::before{background:var(--line)}
+
+  /* 방위 힌트. 그림 자체는 지도가 아니므로 "위쪽이 북쪽" 이라고 말하지 않는다.
+     대신 좌표로 실제 방향 하나만 알려준다. */
+  /* flex 로 두면 문장이 조각마다 따로 줄바꿈돼 읽기 어렵다. 한 문장으로 흐르게 둔다. */
+  .compass{margin:0 0 12px;font-size:11px;line-height:1.55;color:var(--sub);letter-spacing:-.01em}
+  .compass em{font-style:normal;font-size:12px;color:#4A524A;margin-right:3px}
+  .compass b{color:#4A524A;font-weight:700}
+
+  /* 시간 외 표식 + 막차(대략) */
+  .marks{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .tag{font-size:11px;letter-spacing:-.01em;padding:5px 9px;border-radius:999px;
+    border:1px solid var(--rule);background:#fff;color:#4A524A}
+  .tag b{font-weight:700;color:var(--ink)}
+  .marks .last{width:100%;border:1px dashed var(--rule);border-radius:10px;padding:8px 10px;
+    background:#FBFCFA;font-size:11px;line-height:1.6;color:var(--sub);letter-spacing:-.01em}
+  .marks .last b{color:#4A524A;font-weight:700}
 
   /* 이 그림은 지도가 아니다. 위아래는 방향이 아니라 소요시간이고,
      노드 사이 간격은 시간 차이다. 안 밝히면 지도로 읽힌다. */
@@ -174,17 +227,28 @@
     background:linear-gradient(var(--line),var(--rule));flex:none}
   .axis b{color:#4A524A;font-weight:700}
 
-  /* 호선색 범례 — 어느 색이 무슨 노선인지 (항목 6) */
-  .legend{display:flex;flex-wrap:wrap;gap:4px 10px;margin:2px 0 12px;font-size:10.5px;
-    color:var(--sub);letter-spacing:-.01em}
+  /* 호선색 범례 — 노선도 바로 위에 둔다. 그림을 다 본 뒤에 색 설명을 만나면
+     이미 잘못 읽은 뒤라서, 읽기 전에 색의 뜻을 먼저 주는 편이 맞다. */
+  .legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin:0 0 8px;
+    font-size:10.5px;color:var(--sub);letter-spacing:-.01em}
   .legend i{display:inline-flex;align-items:center;gap:4px;font-style:normal}
   .legend i::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--c);flex:none}
+  /* 색이 "가장 먼 사람이 남의 호선까지 탄다" 는 뜻으로 읽힌 적이 있다. 무슨 색인지가 아니라
+     무엇의 색인지를 먼저 밝힌다. ::before 동그라미가 붙지 않게 i 가 아니라 span 이다. */
+  .legend .lgnote{width:100%;margin-bottom:2px;color:#4A524A;letter-spacing:-.02em}
+  .legend .lgnote b{font-weight:700}
 
-  /* 왜 이 역인지 — 규칙을 한 줄로 (항목 3) */
-  .why{margin-top:8px;background:#fff;border:1px solid var(--rule);border-radius:12px;
-    padding:11px 13px;font-size:12px;line-height:1.65;color:#4A524A;letter-spacing:-.02em}
-  .why h4{margin:0 0 3px;font-size:11px;font-weight:800;color:var(--sub);letter-spacing:.02em}
-  .why b{color:var(--ink);font-weight:700}
+  /* 왜 이 역인지 — 첫 화면은 접어두고 누르면 펼친다 (근거는 그대로 둔다) */
+  .why{margin-top:8px;background:#fff;border:1px solid var(--rule);border-radius:12px}
+  .why summary{list-style:none;cursor:pointer;padding:11px 13px;display:flex;align-items:center;gap:6px;
+    font-size:11px;font-weight:800;color:var(--sub);letter-spacing:.02em}
+  .why summary::-webkit-details-marker{display:none}
+  .why summary::after{content:'펼치기';margin-left:auto;font-size:10.5px;font-weight:700;
+    color:var(--line);letter-spacing:-.01em}
+  .why[open] summary::after{content:'접기'}
+  .why summary:focus-visible{outline:3px solid var(--pin);outline-offset:-3px;border-radius:12px}
+  .whybody{padding:0 13px 12px;font-size:12px;line-height:1.65;color:#4A524A;letter-spacing:-.02em}
+  .whybody b{color:var(--ink);font-weight:700}
 
   .verdict{background:var(--paper);border-radius:14px;padding:14px 15px;font-size:13px;
     line-height:1.62;letter-spacing:-.02em;color:#3D453C}
@@ -240,7 +304,18 @@
 
   /* ---- 결과 액션 ---- */
   .acts{display:flex;gap:8px;margin-top:12px}
-  .act{flex:1;padding:12px 10px;font-size:13.5px;text-align:center;text-decoration:none;display:block}
+  /* 어디로 가는 링크인지 버튼 안에 적는다 — 눌러보기 전에는 알 수 없었다 */
+  .act{flex:1;padding:10px 8px;font-size:13.5px;text-align:center;text-decoration:none;display:block;
+    line-height:1.25}
+  .act small{display:block;font-size:10px;font-weight:600;color:var(--sub);margin-top:2px;
+    letter-spacing:-.01em}
+
+  /* 카카오톡 공유 — window.KAKAO_KEY 가 있을 때만 보인다 */
+  .btn.kakao{background:#FEE500;color:#191600}
+
+  /* 개인정보 한 줄 — 무엇을 저장하고 무엇을 안 하는지 */
+  .priv{font-size:10.5px;line-height:1.6;color:var(--sub);letter-spacing:-.01em;margin:12px 0 0}
+  .priv b{color:#4A524A;font-weight:700}
 
   /* ---- 캡쳐 영역 ---- */
   #shot{background:var(--card);border-radius:14px}
@@ -345,6 +420,11 @@
       <button class="btn alt" id="submit" disabled>출발역 등록하기</button>
       <div style="height:9px"></div>
       <button class="btn ghost" id="toresult" disabled>결과 보기</button>
+
+      <p class="priv">
+        <b>수집하는 것</b> — 이름과 출발역뿐입니다. 연락처·IP·쿠키는 저장하지 않아요.
+        중복 집계를 막으려고 임의 식별자 하나를 이 브라우저에만 둡니다.
+      </p>
     </section>
 
     <!-- 3. 결과 -->
@@ -355,14 +435,22 @@
         <h2 id="rtitle">계산하는 중</h2>
         <p class="lede" id="rlede">…</p>
 
+        <div class="keys" id="rkeys" hidden></div>
+        <p class="basis" id="rbasis" hidden></p>
+
         <p class="axis" id="raxis" hidden></p>
+        <p class="legend" id="rlegend" hidden></p>
         <div class="map" id="rmap">
           <div class="rail"></div><div class="railfill"></div>
         </div>
-        <p class="legend" id="rlegend" hidden></p>
+        <p class="compass" id="rcompass" hidden></p>
 
         <div class="verdict" id="verdict"></div>
-        <div class="why" id="rwhy" hidden></div>
+        <div class="marks" id="rmarks" hidden></div>
+        <details class="why" id="rwhy" hidden>
+          <summary>왜 이 역인가요?</summary>
+          <div class="whybody" id="rwhybody"></div>
+        </details>
       </div>
 
       <!-- 위치 A: 다이어그램·요약을 다 본 직후 -->
@@ -381,8 +469,8 @@
       </div>
 
       <div class="acts" id="acts" hidden>
-        <a class="btn ghost act" id="food" target="_blank" rel="noopener">🍜 맛집</a>
-        <a class="btn ghost act" id="cafe" target="_blank" rel="noopener">☕ 카페</a>
+        <a class="btn ghost act" id="food" target="_blank" rel="noopener">🍜 맛집<small>카카오맵에서 보기</small></a>
+        <a class="btn ghost act" id="cafe" target="_blank" rel="noopener">☕ 카페<small>카카오맵에서 보기</small></a>
       </div>
 
       <div class="alts" id="alts" hidden>
@@ -392,9 +480,21 @@
 
       <p class="err" id="err2"></p>
       <div class="spacer"></div>
+
+      <div id="rlink" hidden>
+        <label class="f">결과 링크 — 열면 바로 이 화면</label>
+        <div class="linkbox"><b id="rlinktext">—</b><button id="rcopy" type="button">복사</button></div>
+      </div>
+      <button class="btn kakao" id="kshare" hidden>카카오톡으로 보내기</button>
+      <div id="kgap" hidden style="height:9px"></div>
       <button class="btn alt" id="share">결과 이미지로 공유하기</button>
       <div style="height:9px"></div>
       <button class="btn ghost" id="again">참여 현황으로 돌아가기</button>
+
+      <p class="priv">
+        <b>수집하는 것</b> — 이름과 출발역뿐입니다. 연락처·IP·쿠키는 저장하지 않아요.
+        중복 집계를 막으려고 임의 식별자 하나를 이 브라우저에만 둡니다.
+      </p>
     </section>
   </div>
 
@@ -408,7 +508,7 @@
 </div>
 
 <script src="./html2canvas.min.js?v=e87e5507"></script>
-<script src="./config.js?v=e877d385"></script>
-<script src="./app.js?v=d3320f28"></script>
+<script src="./config.js?v=16dfd945"></script>
+<script src="./app.js?v=f4642bdb"></script>
 </body>
 </html>
