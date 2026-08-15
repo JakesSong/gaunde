@@ -128,14 +128,82 @@ describe('A. 알고리즘 정확성', () => {
 
   test('밴드·합계가 같으면 요금이 싼 쪽을 고른다', () => {
     // 인위적으로 동점을 만들 수 없으므로 정렬 규칙 자체를 확인한다.
+    // 다양성 재배열은 이 규칙 위에 얹히는 별개 단계라 여기서는 끄고 본다.
     const origins = ['강남', '노원', '인천'].map(sid);
-    const r = G.findMeetingPoint(origins, { toleranceMin: 30, topN: 400 });
+    const r = G.findMeetingPoint(origins, { toleranceMin: 30, topN: 400, diversify: false });
     const band = [r.best, ...r.alternatives].filter((x) => x.inBand);
     for (let i = 1; i < band.length; i++) {
       const a = band[i - 1], b = band[i];
       const ordered = a.sumSec < b.sumSec
         || (a.sumSec === b.sumSec && a.fareTotal <= b.fareTotal);
       assert.ok(ordered, `밴드 정렬 위반: ${a.station.name}(${a.sumSec}s,${a.fareTotal}원) → ${b.station.name}(${b.sumSec}s,${b.fareTotal}원)`);
+    }
+  });
+
+  /* 후보 3개가 전부 같은 노선이라 고를 게 없다는 피드백에 대한 회귀.
+     동률 밴드 안에서는 순위를 조금 양보하고 노선을 섞는다. */
+  test('후보 다양성: 밴드 안에서 같은 노선 구성이 겹치지 않는다', () => {
+    let mixedSomewhere = false;
+    for (const names of [['강남', '사당', '이수'], ['노원', '창동', '수유'], ['홍대입구', '잠실', '노원', '사당']]) {
+      const origins = names.map(sid);
+      const r = G.findMeetingPoint(origins, { topN: 3 });
+      const shown = [r.best, ...r.alternatives];
+      const inBand = shown.filter((s) => s.inBand);
+      const sigs = inBand.map((s) => [...s.station.lines].sort().join('+'));
+      assert.equal(new Set(sigs).size, sigs.length,
+        `${names}: 밴드 안 후보의 노선 구성이 겹친다 — ${shown.map((s) => s.station.name + '(' + s.station.lines + ')').join(' / ')}`);
+      if (new Set(inBand.flatMap((s) => s.station.lines)).size > 1) mixedSomewhere = true;
+    }
+    assert.ok(mixedSomewhere, '어느 조합에서도 서로 다른 노선이 섞이지 않았다');
+  });
+
+  test('후보 다양성이 1위(추천)를 바꾸지는 않는다', () => {
+    for (const names of [['강남', '사당', '이수'], ['수원', '의정부', '인천'], ['부평', '노원']]) {
+      const origins = names.map(sid);
+      const on = G.findMeetingPoint(origins, { topN: 3, diversify: true });
+      const off = G.findMeetingPoint(origins, { topN: 3, diversify: false });
+      assert.equal(on.best.station.id, off.best.station.id, `${names}: 추천역이 바뀌었다`);
+      assert.equal(on.best.sumSec, off.best.sumSec);
+    }
+  });
+
+  test('다양성 때문에 후보 수가 줄지 않는다', () => {
+    const origins = ['홍대입구', '잠실', '노원', '사당'].map(sid);
+    const on = G.findMeetingPoint(origins, { topN: 3, diversify: true });
+    const off = G.findMeetingPoint(origins, { topN: 3, diversify: false });
+    assert.equal(on.alternatives.length, off.alternatives.length);
+  });
+
+  /* "출발역이 정답인 경우를 못 잡는다" 는 의심에 대한 회귀.
+     후보 = 환승역 + 참여자 출발역이라는 걸 응답의 숫자로도 확인할 수 있어야 한다. */
+  test('참여자 출발역이 후보 평가에 들어간다', () => {
+    // 신답은 단일노선역이라 환승역 후보에 없다 — 출발역으로 넣어야만 후보가 된다
+    const solo = sid('신답');
+    assert.ok(!G.hubIds.includes(solo), '전제: 신답은 환승역 후보가 아니다');
+
+    const r = G.findMeetingPoint([solo, solo, solo]);
+    assert.equal(r.best.station.id, solo, '다 같은 역인데 다른 역으로 나갔다');
+    assert.equal(r.selection.candidateSources.origins, 1, '출발역이 후보에 안 들어갔다');
+    assert.equal(r.selection.candidateSources.originsNotHub, 1,
+      '환승역이 아닌 출발역이 후보에 더해졌다고 세어지지 않는다');
+    assert.equal(r.selection.candidatePool, 'hubs+origins');
+
+    // 환승역만 후보로 두면 이 성질이 깨진다는 것도 같이 못 박는다
+    const hubsOnly = G.findMeetingPoint([solo, solo, solo], { candidates: G.hubIds });
+    assert.notEqual(hubsOnly.best.station.id, solo);
+    assert.ok(hubsOnly.best.maxSec > 0, '환승역만 두면 안 움직여도 될 사람이 움직인다');
+  });
+
+  test('소요시간 오차 폭은 배차간격에서 나온다 (지어낸 값이 아니다)', () => {
+    const r = G.findMeetingPoint(['수원', '의정부'].map(sid), { topN: 1 });
+    for (const route of r.best.routes) {
+      if (!route.path || !route.path.legs.length) {
+        assert.equal(route.marginSec, 0, '안 움직이는 사람에게 오차를 붙이지 않는다');
+        continue;
+      }
+      const want = route.path.legs.reduce((s, l) => s + G.waitSec(l.line), 0);
+      assert.equal(route.marginSec, Math.min(900, Math.max(180, want)),
+        '오차 폭이 배차간격/2 합(최소 3분·최대 15분)과 다르다');
     }
   });
 

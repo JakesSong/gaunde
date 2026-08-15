@@ -14,7 +14,7 @@
  * 위 정의 아래 모든 간선 비용이 음이 아니므로 다익스트라가 성립한다.
  */
 
-import { TOLERANCE_MIN, HUB_MIN_LINES, EXTRA_HUB_NAMES } from './config.mjs';
+import { TOLERANCE_MIN, HUB_MIN_LINES, EXTRA_HUB_NAMES, DIVERSIFY_CANDIDATES } from './config.mjs';
 import { fareFor, surchargeLines } from './fare.mjs';
 
 /* --------------------------------------------------------------- 이진 힙 */
@@ -118,6 +118,27 @@ export class MetroGraph {
   /** 해당 노선 승강장에서의 평균 대기시간(초) = 배차간격/2 */
   waitSec(lineKey) {
     return Math.round((this.lines[lineKey]?.headwayMin ?? 6) * 60 / 2);
+  }
+
+  /**
+   * 자체 그래프로 낸 소요시간의 불확실성(초).
+   *
+   * 화면에 "N분" 만 적으면 확정된 시각표처럼 읽힌다. 실제로는 요금만 근사치라고
+   * 써 있고 시간은 확정처럼 보인다는 지적이 있었다.
+   *
+   * 가장 큰 흔들림은 배차간격이다 — 평일 낮 대표값 하나로 고정해 두었으므로
+   * 실제 대기는 0 ~ 배차간격 사이에서 움직인다. 그래서 타는 구간(leg)마다
+   * 배차/2 를 불확실성으로 잡아 더한다. 여기에 잡히지 않는 오차(급행 미반영,
+   * 추정 구간의 직선거리 근사, 계통 분기 대기)는 이 값 밖이므로,
+   * 화면 문구는 항상 "대략" 으로 적는다.
+   *
+   * 최소 3분 — 1분 단위로 딱 떨어지는 숫자를 내면 정밀해 보이는 역효과가 난다.
+   * 최대 15분 — 배차가 긴 광역노선에서 값이 커져 오히려 무의미해지는 걸 막는다.
+   */
+  estimateMarginSec(path) {
+    if (!path || !path.legs || !path.legs.length) return 0;
+    const wait = path.legs.reduce((s, l) => s + this.waitSec(l.line), 0);
+    return Math.min(15 * 60, Math.max(3 * 60, wait));
   }
 
   /** 이름으로 역 찾기. 동명이역이면 여러 개를 돌려준다. */
@@ -273,6 +294,14 @@ export class MetroGraph {
      *
      * 아무도 못 가는 상황이면 전체 역으로 넓혀 답은 반드시 낸다. */
     let usedFallback = false;
+    const hubSet = new Set(this.hubIds);
+    /* 출발역이 실제로 후보에 들어갔는지 세어 응답에 싣는다.
+       "출발역이 정답인 경우를 못 잡는다" 는 의심이 반복돼서, 말로 답하지 않고
+       숫자로 답할 수 있게 해 둔다.
+         origins      = 후보로 들어간 서로 다른 출발역 수 (전부 후보다)
+         originsNotHub = 그중 환승역이 아니어서 출발역이 아니었다면 못 들어왔을 역 수 */
+    const uniqOrigins = [...new Set(originIds)];
+    const originsNotHub = uniqOrigins.filter((id) => !hubSet.has(id)).length;
     const defaultCandidates = [...new Set([...this.hubIds, ...originIds])];
     let scored = this.scoreCandidates(opts.candidates ?? defaultCandidates, results);
     if (!scored.length) {
@@ -292,7 +321,14 @@ export class MetroGraph {
 
     band.sort((a, b) => a.sumSec - b.sumSec || a.fareTotal - b.fareTotal || a.maxSec - b.maxSec);
     rest.sort((a, b) => a.maxSec - b.maxSec || a.sumSec - b.sumSec);
-    const ranked = band.concat(rest);
+
+    /* 밴드 안(=사실상 동률)에서만 노선을 섞는다. 1위는 그대로 둔다.
+       opts.diversify=false 로 끄면 순수 정렬 규칙(합계→요금→최댓값)만 남는다 —
+       그 규칙 자체를 검사하는 테스트가 다양성 재배열과 뒤엉키지 않게 하기 위한 문이다. */
+    const div = (opts.diversify ?? DIVERSIFY_CANDIDATES)
+      ? diversifyRanked(band, topN, (e) => this.stations[e.stationId].lines)
+      : { list: band, grouped: 0, reordered: false };
+    const ranked = div.list.concat(rest);
 
     const decorate = (entry) => {
       if (!entry.paths) this.fillRoutes(entry, results, originIds);
@@ -314,6 +350,8 @@ export class MetroGraph {
             sec: results[i].stationTime[entry.stationId],
             fare: fareFor(km, lines, this.lines),
             surcharges: surchargeLines(lines, this.lines),
+            /* 그래프 시간이 화면에 그대로 나갈 때 붙일 오차 폭. ODsay 값으로 덮이면 쓰이지 않는다. */
+            marginSec: this.estimateMarginSec(path),
             path,
           };
         }),
@@ -327,8 +365,11 @@ export class MetroGraph {
         toleranceMin: toleranceSec / 60,
         minMaxSec: minMax,
         bandSize: band.length,
-        candidatePool: usedFallback ? 'all-stations' : 'hubs',
+        candidatePool: usedFallback ? 'all-stations' : 'hubs+origins',
         candidateCount: scored.length,
+        /* 후보가 어디서 왔는지. 출발역이 후보에 들어가 있다는 걸 응답에서 확인할 수 있어야 한다. */
+        candidateSources: { hubs: this.hubIds.length, origins: uniqOrigins.length, originsNotHub },
+        diversity: { grouped: div.grouped, reordered: div.reordered },
       },
       /** 각자 집 앞에서 보자고 할 때의 최악 소요시간 — 비교용 */
       worstPairwiseSec: (() => {
@@ -343,6 +384,51 @@ export class MetroGraph {
       })(),
     };
   }
+}
+
+/**
+ * 동률 밴드 안에서 후보를 서로 다른 노선으로 섞는다.
+ *
+ * 왜: 밴드 안은 "사실상 동률" 인데 합계 순으로만 줄 세우면 이웃한 같은 노선 역들이
+ * 나란히 1·2·3위를 차지한다. 실제로 후보 3개가 전부 4호선이라 고를 게 없다는
+ * 피드백이 왔다. 시간 차가 없는 자리에서 순위를 조금 양보하고 노선을 섞으면
+ * "다른 선택지" 가 생긴다.
+ *
+ * 규칙
+ *   - 1위는 절대 건드리지 않는다. 추천은 그대로 추천이어야 한다.
+ *   - 2위부터는 아직 안 나온 노선을 하나라도 데려오는 후보를 먼저 채운다.
+ *   - 노선 구성이 완전히 같은 역(예: 같은 노선의 이웃역)은 대표 하나만 남긴다.
+ *   - 자리가 남으면 원래 순위대로 메운다 — 다양성 때문에 후보 수가 줄지는 않는다.
+ *
+ * 밴드 밖 후보는 넘기지 않는다(호출부에서 concat). 그쪽은 실제로 더 나쁜 후보라
+ * 순서를 흔들면 안 된다.
+ *
+ * @param {Array} band     밴드 안 후보 (이미 순위대로 정렬됨)
+ * @param {number} topN    화면에 보여줄 후보 수
+ * @param {(e:any)=>string[]} linesOf  후보에서 노선 목록을 꺼내는 함수
+ * @returns {{list:Array, grouped:number, reordered:boolean}}
+ */
+export function diversifyRanked(band, topN, linesOf) {
+  const none = { list: band, grouped: 0, reordered: false };
+  if (!Array.isArray(band) || band.length <= 2 || topN <= 1) return none;
+
+  const sigOf = (e) => [...new Set(linesOf(e) || [])].sort().join('+');
+  const picked = [band[0]];
+  const taken = new Set([0]);
+  const used = new Set(linesOf(band[0]) || []);
+  const seen = new Set([sigOf(band[0])]);
+  let grouped = 0;
+
+  for (let i = 1; i < band.length && picked.length < topN; i++) {
+    const e = band[i];
+    const lines = linesOf(e) || [];
+    if (seen.has(sigOf(e)) || !lines.some((l) => !used.has(l))) { grouped++; continue; }
+    picked.push(e); taken.add(i); seen.add(sigOf(e));
+    for (const l of lines) used.add(l);
+  }
+
+  const list = picked.concat(band.filter((_, i) => !taken.has(i)));
+  return { list, grouped, reordered: list.some((e, i) => e !== band[i]) };
 }
 
 export function normalizeName(raw) {

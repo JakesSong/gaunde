@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openStore } from '../server/db.mjs';
+import { openStore, TRACKED_EVENTS } from '../server/db.mjs';
 import { parseRange, kstDayToUtc, nextDay } from '../server/daterange.mjs';
 
 /* ============================================================ 날짜 해석 */
@@ -126,10 +126,12 @@ describe('구간별 집계', () => {
 
   test('이벤트·퍼널·참여자 분포가 모두 구간 기준으로 다시 계산된다', async () => {
     const s = await store.getStats(day('2026-08-13'));
-    assert.deepEqual(s.events, {
-      room_created: 3, origin_submitted: 0, result_viewed: 2, result_view: 0,
-      share_clicked: 1, result_feedback: 0,
-    });
+    /* 이벤트 종류가 늘어도(예: share_kakao) 이 테스트가 깨지지 않게 목록은 소스에서 가져오고,
+       0 이 아닌 값만 눈으로 못 박는다. */
+    assert.deepEqual(s.events, Object.assign(
+      Object.fromEntries(TRACKED_EVENTS.map((e) => [e, 0])),
+      { room_created: 3, result_viewed: 2, share_clicked: 1 },
+    ));
     assert.deepEqual(s.participantsHistogram, { 2: 1, 3: 1, 4: 1 }, 'b/c/d 의 참여자 수');
 
     const steps = Object.fromEntries(s.funnel.map((f) => [f.step, f.meetings]));

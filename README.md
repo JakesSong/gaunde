@@ -147,6 +147,46 @@ t_run(초) = (24.3 + 62.8 × km) × speedFactor[노선]
 으로 제한한다(658개 → 130개 + 출발역). 아무것도 없는 역에서 만나자는 결과를 막고,
 나중에 ODsay 를 붙였을 때 호출 수도 같이 줄인다. **출발역 선택은 제한하지 않는다.**
 
+출발역이 후보에 들어가 있다는 건 응답의 `selection.candidateSources` 로 확인할 수 있다.
+
+```json
+"candidatePool": "hubs+origins",
+"candidateSources": { "hubs": 130, "origins": 4, "originsNotHub": 1 }
+```
+
+`origins` 는 후보로 들어간 서로 다른 출발역 수, `originsNotHub` 는 그중 환승역이 아니어서
+**출발역이 아니었다면 후보가 될 수 없었던** 역 수다. 이게 0 보다 크면 "우리 동네가 답인 경우"
+를 실제로 따지고 있다는 뜻이다. (테스트: `참여자 출발역이 후보 평가에 들어간다`)
+
+**후보 다양성** — 동률 밴드 안에서만 노선을 섞는다. 밴드는 사실상 동률인데 합계 순으로만
+줄 세우면 이웃한 같은 노선 역들이 1·2·3위를 나란히 차지해서, 후보 3개가 전부 4호선인
+목록이 나왔다. 그래서 **1위는 그대로 두고**, 2위부터는 아직 안 나온 노선을 데려오는 후보를
+먼저 채운다. 노선 구성이 완전히 같은 역은 대표 하나만 남기고, 자리가 남으면 원래 순위대로
+메운다 — 다양성 때문에 후보 개수가 줄지는 않는다. (`graph.mjs: diversifyRanked`,
+끄려면 `findMeetingPoint(..., { diversify: false })`)
+
+### 소요시간의 오차 폭
+
+요금만 "근사치"라고 적혀 있고 시간은 확정된 시각표처럼 보인다는 지적이 있었다.
+그래서 응답이 시간의 출처와 오차 폭을 같이 내려준다.
+
+| 필드 | 뜻 |
+|---|---|
+| `best.timeBasis` | `odsay`(전원 실시간) / `mixed` / `graph`(전원 자체 그래프) / `none`(다 같은 역) |
+| `best.marginMin` | 그래프로 낸 사람 중 가장 큰 오차 폭(분). 화면에는 "대략 ±N분" |
+| `routes[].marginMin` | 사람별 오차 폭. ODsay 로 온 값에는 붙이지 않는다(0) |
+
+오차 폭은 지어낸 값이 아니라 **배차간격**에서 나온다. 배차는 평일 낮 대표값 하나로
+고정돼 있어 실제 대기는 0~배차 사이에서 움직이므로, 타는 구간마다 `배차/2` 를 더하고
+최소 3분·최대 15분으로 자른다(`graph.mjs: estimateMarginSec`). 급행 미반영 같은
+다른 오차는 여기 안 들어가므로 화면 문구는 늘 "대략" 이다.
+
+### 막차 (정적 근사)
+
+시각표 데이터가 없으므로 **"막차를 놓치는지" 는 계산하지 않는다.** 노선 등급별 통상
+범위(`config.LAST_TRAIN_APPROX`)만 응답에 실어 "막차 대략 00:00~00:30" 으로 표시하고,
+화면에 '대략·참고용' 을 반드시 붙인다. 범위를 모르는 노선은 아예 빼서 지어내지 않는다.
+
 ### 요금
 
 수도권 통합요금(기본 1,550원 / 10km, 이후 5km당 100원, 50km 초과 8km당 100원)에
@@ -176,6 +216,7 @@ server/routing/             라우팅 어댑터 (기본=그래프, ODSAY_KEY 있
 server/db.mjs               저장소 (DATABASE_URL 있으면 Postgres, 없으면 SQLite)
 server/index.mjs            Express API
 public/                     프런트 (목업 디자인 계승, 빌드 도구 없음)
+public/config.js            API 주소 · 카카오 JavaScript 앱키 주입 자리
 test/graph.test.mjs         단위·통합 테스트
 test/e2e.mjs                헤드리스 end-to-end
 supabase/schema.sql         Postgres 스키마 + RLS
@@ -387,7 +428,34 @@ ODsay 는 초당 호출 한도가 있다. 동시 6개로 몰아쳤더니 **24쌍
 
 ---
 
-## 7. 배포
+## 7. 공유
+
+공유 버튼이 내보내는 링크는 항상 **결과 직행** 이다 — `?m=<토큰>&r=1`.
+받은 사람이 "결과 보기" 를 한 번 더 눌러야 하면 거기서 끊긴다.
+참여를 받을 때 쓰는 링크(`?m=<토큰>`)와는 다른 링크다.
+
+### 카카오톡으로 보내기 (선택)
+
+**카카오 JavaScript 앱키가 있어야 한다.** 키가 없으면 버튼 자체가 안 뜨고
+기존 이미지 + 링크 공유(Web Share / 다운로드)로만 동작한다 — 없다고 깨지지 않는다.
+
+키는 코드에 박지 않는다. `app.js` 는 `window.KAKAO_KEY` 만 읽는다.
+
+1. [developers.kakao.com](https://developers.kakao.com) > 내 애플리케이션 > 앱 키 >
+   **JavaScript 키** 를 복사한다. (REST API 키·Admin 키가 아니다 — JavaScript 키는
+   도메인이 묶인 공개 키라 브라우저에 노출되는 게 정상이다.)
+2. 같은 콘솔의 **플랫폼 > Web** 에 서비스 도메인을 등록한다.
+   `https://jakessong.github.io` (로컬 확인이 필요하면 `http://localhost:3000` 도)
+3. `public/config.js` 의 `window.KAKAO_KEY = window.KAKAO_KEY || ''` 를 그 키로 바꾸고
+   `npm run deploy:pages` 를 다시 돌린다.
+
+저장소에 커밋하고 싶지 않다면 배포 직전에만 채우거나, 다른 스크립트에서
+`window.KAKAO_KEY` 를 정의해도 된다. 키가 커밋돼 있으면 `npm test` 가 잡는다
+(`카카오 앱키를 코드에 박지 않는다`).
+
+---
+
+## 8. 배포
 
 프런트는 GitHub Pages, 백엔드는 Render, DB는 Supabase.
 자세한 절차는 **[DEPLOY.md](DEPLOY.md)** 에 있다.

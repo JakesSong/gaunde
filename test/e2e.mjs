@@ -190,11 +190,23 @@ check('데이터 커버리지 각주', /실측 \d+%/.test(footer), footer);
 /* ================================================================= */
 log('\n■ 결과 화면 개편 확인');
 check('문구가 "가장 먼 사람도 N분"', /가장 먼 사람도 \d+분/.test(title), title);
-check('평균·요금 표기', /평균 \d+분 · 1인 [\d,]+원/.test(text(lastWin, 'rlede')), text(lastWin, 'rlede'));
+/* 상단은 "문장 한 줄 + 큰 숫자" 로 나뉘었다. 설명문에는 인원·평균만 남고
+   핵심 수치(가장 먼 사람·1인 요금)는 별도 타일로 크게 나간다. */
+check('상단 설명이 압축됨 (인원·평균만)', /^\d+명 · 평균 \d+분$/.test(text(lastWin, 'rlede')), text(lastWin, 'rlede'));
+{
+  const keys = lastWin.document.getElementById('rkeys');
+  const t = keys.textContent.replace(/\s+/g, ' ').trim();
+  check('핵심 수치 타일 노출', !keys.hidden && /\d+분/.test(t) && /[\d,]+원/.test(t), t);
+  check('핵심 수치는 가장 먼 사람 · 1인 요금', /가장 먼 사람/.test(t) && /1인 요금/.test(t), t);
+}
 const foodHref = decodeURIComponent(lastWin.document.getElementById('food').href);
 const cafeHref = decodeURIComponent(lastWin.document.getElementById('cafe').href);
 check('맛집·카페 버튼이 카카오맵으로', /map\.kakao\.com\/\?q=.+맛집$/.test(foodHref) && /카페$/.test(cafeHref),
   foodHref + ' / ' + cafeHref);
+check('맛집·카페 버튼에 "카카오맵에서 보기" 명시',
+  /카카오맵에서 보기/.test(lastWin.document.getElementById('food').textContent) &&
+  /카카오맵에서 보기/.test(lastWin.document.getElementById('cafe').textContent),
+  lastWin.document.getElementById('food').textContent.replace(/\s+/g, ' '));
 check('맛집 링크가 새 탭으로', lastWin.document.getElementById('food').target === '_blank');
 check('세로 간격이 소요시간에 비례',
   [...lastWin.document.querySelectorAll('#rmap .stop:not(.hit)')].some((s) => /margin-(top|bottom):\s*\d+px/.test(s.getAttribute('style') || '')));
@@ -288,6 +300,117 @@ check('다른 후보 클릭 → 그 역 기준으로 재계산 표시', beforeHi
 check('선택 표시가 옮겨감', altBtns[1].classList.contains('on') && !altBtns[0].classList.contains('on'));
 altBtns[0].dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
 await sleep(150);
+
+/* ================================================================= */
+log('\n■ 사용자 피드백 반영 — 라벨 · 배지 · 접힘 · 경로 · 표식');
+{
+  const doc = lastWin.document;
+  const res = await fetch(`${BASE}/api/meetings/${token}/result`).then((r) => r.json());
+
+  /* 2. 범례를 노선도 위로 + 9. 색이 무슨 뜻인지 */
+  const shotKids = [...doc.querySelectorAll('#shot > *')].map((el) => el.id || el.className);
+  check('범례가 노선도보다 위에 그려진다',
+    shotKids.indexOf('rlegend') >= 0 && shotKids.indexOf('rlegend') < shotKids.indexOf('rmap'),
+    shotKids.join(' → '));
+  const legendText = text(lastWin, 'rlegend');
+  check('노드 색이 "그 사람 출발역 호선" 임을 밝힌다',
+    /출발역에서 처음 타는 호선/.test(legendText), legendText.slice(0, 60));
+
+  /* 3. 왜 이 역인가요? — 기본 접힘, 눌러서 펼침 */
+  const why = doc.getElementById('rwhy');
+  check('근거 블록이 details 다', why.tagName === 'DETAILS', why.tagName);
+  check('첫 화면에서는 접혀 있다', why.open === false, String(why.open));
+  check('접혀 있어도 근거 내용은 그대로 있다', /모두의 시간을 합쳐 가장 짧은/.test(why.textContent));
+  why.querySelector('summary').dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
+  // jsdom 은 summary 클릭으로 open 을 토글하지 않는 판이 있어 직접도 확인한다
+  if (!why.open) why.open = true;
+  check('펼치면 본문이 보인다', why.open && text(lastWin, 'rwhybody').length > 20,
+    text(lastWin, 'rwhybody').slice(0, 60));
+  why.open = false;
+
+  /* 5. 참여자 출발역이 후보에 들어간다 */
+  const src = res.selection.candidateSources || {};
+  check('후보 풀이 환승역 + 출발역', res.selection.candidatePool === 'hubs+origins', res.selection.candidatePool);
+  check('출발역이 후보에 실제로 더해졌다', typeof src.origins === 'number' && src.origins >= 1,
+    `hubs ${src.hubs} + origins ${src.origins}`);
+  check('근거 문구에도 출발역 포함이 적힌다', /참여자 출발역 \d+곳/.test(why.textContent),
+    (why.textContent.match(/참여자 출발역 \d+곳/) || [''])[0]);
+
+  /* 6. 소요시간 불확실성 배지 */
+  const basis = doc.getElementById('rbasis');
+  check('계산 기준 배지 노출', !basis.hidden, basis.textContent);
+  check('배지가 실시간/근사를 구분한다',
+    /실시간 대중교통 기준/.test(basis.textContent) || /각역정차 근사/.test(basis.textContent),
+    basis.textContent);
+  check('그래프 근사면 오차 폭이 붙는다',
+    res.best.timeBasis !== 'graph' || /±\d+분/.test(basis.textContent),
+    `timeBasis=${res.best.timeBasis} / ${basis.textContent}`);
+  check('응답에 timeBasis·marginMin 이 있다',
+    typeof res.best.timeBasis === 'string' && typeof res.best.marginMin === 'number',
+    `${res.best.timeBasis} ±${res.best.marginMin}분`);
+  check('실시간으로 온 경로에는 오차를 붙이지 않는다',
+    res.best.routes.every((r) => r.timeSource !== 'odsay' || r.marginMin === 0));
+
+  /* 7. 후보 다양성 — 밴드 안에서 노선 구성이 겹치지 않는다 */
+  const shown = [res.best, ...res.alternatives];
+  const sigs = shown.filter((s) => s.inBand).map((s) => [...s.station.lines].sort().join('+'));
+  check('후보들이 같은 노선으로 쏠리지 않는다', new Set(sigs).size === sigs.length,
+    shown.map((s) => `${s.station.name}(${s.station.lines.join(',')})`).join(' / '));
+
+  /* 8. 각자 경로 펼쳐 보기 */
+  const row = doc.querySelector('#rmap .stop.can');
+  check('이동하는 참여자 줄은 펼칠 수 있다', !!row, row && row.textContent.replace(/\s+/g, ' ').trim());
+  check('접힌 상태에서는 경로 DOM 이 없다', !row.querySelector('.legs'));
+  row.dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
+  await sleep(80);
+  const legs = row.querySelector('.legs');
+  check('누르면 그 사람 경로가 펼쳐진다', !!legs && legs.querySelectorAll('.leg').length > 0,
+    legs && legs.textContent.replace(/\s+/g, ' ').trim().slice(0, 90));
+  check('경로에 노선명·구간이 적힌다', /→/.test(legs.textContent) && /개 역/.test(legs.textContent));
+  check('경로에도 계산 기준이 붙는다', /각역정차|실시간 대중교통/.test(legs.textContent),
+    (legs.querySelector('.cap') || {}).textContent);
+  check('aria-expanded 가 따라간다', row.getAttribute('aria-expanded') === 'true');
+  row.dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
+  await sleep(60);
+  check('다시 누르면 접힌다', row.querySelector('.legs').hidden === true &&
+    row.getAttribute('aria-expanded') === 'false');
+
+  /* 13·14. 막차(대략) · 시간 외 표식 */
+  const marks = doc.getElementById('rmarks');
+  check('표식 블록 노출', !marks.hidden, marks.textContent.replace(/\s+/g, ' ').trim().slice(0, 90));
+  check('환승 노선 수 또는 번화가 표식', /환승 \d+개 노선|단일 노선|번화가/.test(marks.textContent));
+  check('막차는 "대략" 이라고 못 박는다',
+    !/막차/.test(marks.textContent) || (/막차/.test(marks.textContent) && /대략/.test(marks.textContent)),
+    (marks.textContent.match(/막차[^\n]{0,60}/) || [''])[0].replace(/\s+/g, ' '));
+  check('막차 값이 응답에서 온다 (프런트가 지어내지 않는다)',
+    (res.best.lastTrain.lines || []).every((x) => /^\d{2}:\d{2}~\d{2}:\d{2}$/.test(x.approx)),
+    JSON.stringify(res.best.lastTrain.lines));
+
+  /* 15. 방위 힌트 */
+  const compass = doc.getElementById('rcompass');
+  check('방위 힌트 한 줄', !compass.hidden, compass.textContent.replace(/\s+/g, ' ').trim());
+  check('힌트가 "그림은 지도가 아니다" 를 함께 말한다', /지도가 아닙니다/.test(compass.textContent));
+  check('방향은 좌표에서 낸다', res.best.routes.every((r) => typeof r.originLat === 'number'));
+
+  /* 11. 공유 링크 = 결과 직행 */
+  check('결과 링크가 ?m=…&r=1', /\?m=[a-z0-9]{10}&r=1$/.test(text(lastWin, 'rlinktext')), text(lastWin, 'rlinktext'));
+  check('결과 링크 박스 노출', doc.getElementById('rlink').hidden === false);
+
+  /* 12. 카카오 키가 없으면 버튼도 없다 (기존 공유로 폴백) */
+  check('KAKAO_KEY 없으면 카톡 버튼 숨김', doc.getElementById('kshare').hidden === true);
+  check('이미지 공유 버튼은 그대로', doc.getElementById('share').hidden === false);
+
+  /* 10. 개인정보 한 줄 */
+  const privs = [...doc.querySelectorAll('.priv')];
+  check('개인정보 문구가 입력·결과 화면에 있다', privs.length >= 2, privs.length + '곳');
+  check('무엇을 수집/미수집하는지 적혀 있다',
+    privs.every((p) => /이름과 출발역/.test(p.textContent) && /IP·쿠키/.test(p.textContent)));
+
+  /* 4. 우측 상단 점 3개 — 메뉴가 아니라 진행 표시 */
+  const dots = [...doc.querySelectorAll('.dot')];
+  check('진행 표시는 버튼이 아니다', dots.length === 3 &&
+    dots.every((d) => d.tagName === 'DIV' && !d.getAttribute('role') && !d.onclick), dots.length + '개');
+}
 
 /* ================================================================= */
 log('\n■ 같은 역 참여자 병합 + 수정/삭제');

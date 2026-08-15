@@ -37,6 +37,7 @@
     poll: null,
     result: null,      // 마지막 결과 응답
     shownSpot: null,   // 지금 보고 있는 후보 (best 또는 alternatives[i])
+    groups: [],        // 지금 그려진 다이어그램의 줄 (같은 역 출발자끼리 묶은 것)
   };
 
   /* ------------------------------------------------------------ 유틸 */
@@ -386,6 +387,11 @@
     $('raxis').hidden = true;
     $('rlegend').hidden = true;
     $('rwhy').hidden = true;
+    $('rkeys').hidden = true;
+    $('rbasis').hidden = true;
+    $('rcompass').hidden = true;
+    $('rmarks').hidden = true;
+    $('rlink').hidden = true;
     showErr('err2', '');
 
     api('/api/meetings/' + encodeURIComponent(state.token) + '/result')
@@ -403,12 +409,20 @@
             '</button>';
         }).join('');
         $('alts').hidden = spots.length < 2;
+
+        /* 공유 링크는 결과 직행(?m=…&r=1)이 기본이다 — 받은 사람이 한 번 더
+           "결과 보기" 를 눌러야 하면 대부분 거기서 끊긴다. */
+        $('rlinktext').textContent = resultUrl();
+        $('rlink').hidden = false;
+        showKakao();
       })
       .catch(function (e) {
         $('rtitle').textContent = '아직 계산할 수 없습니다';
         $('rlede').textContent = '';
         $('rmap').innerHTML = '<div class="rail"></div><div class="railfill"></div>';
         $('raxis').hidden = true; $('rlegend').hidden = true; $('rwhy').hidden = true;
+        $('rkeys').hidden = true; $('rbasis').hidden = true;
+        $('rcompass').hidden = true; $('rmarks').hidden = true;
         $('verdict').textContent = e.message;
       });
   }
@@ -509,13 +523,20 @@
     var d = state.result;
     state.shownSpot = spot;
     var n = d.meeting.participants.length;
+    var sel = d.selection || {};
 
     $('rtitle').innerHTML = '가장 먼 사람도 <em>' + spot.maxMin + '분</em>';
-    var sel = d.selection || {};
-    var basis = sel.fareSource === 'odsay' ? ' (실시간 대중교통 기준)'
-      : sel.fareSource === 'mixed' ? ' (일부 실시간 기준)'
-      : (sel.fareApprox ? ' (지하철 기준, 요금은 근사치)' : '');
-    $('rlede').textContent = n + '명 평균 ' + spot.avgMin + '분 · 1인 ' + won(spot.fareAvg) + basis;
+
+    /* 상단은 압축한다 — 문장 한 줄 + 큰 숫자 두 개.
+       예전에는 평균·요금·계산기준이 한 문장에 다 들어가 아무것도 눈에 안 띄었다. */
+    $('rlede').textContent = n + '명 · 평균 ' + spot.avgMin + '분';
+    $('rkeys').innerHTML =
+      '<div class="hi"><b>' + spot.maxMin + '분</b><span>가장 먼 사람</span></div>' +
+      '<div><b>' + won(spot.fareAvg) + '</b><span>1인 요금' +
+        (sel.fareApprox ? ' (근사치)' : '') + '</span></div>';
+    $('rkeys').hidden = false;
+
+    renderBasis(spot);
 
     /* 같은 역에서 출발하는 사람은 한 줄로 묶는다 — 위아래로 갈리면 같은 역이 두 번 나온다 */
     var groups = [];
@@ -525,12 +546,14 @@
       if (byStation[k] === undefined) {
         byStation[k] = groups.length;
         groups.push({ names: [r.name], origin: r.origin, min: r.min, fare: r.fare,
-        legs: r.legs, transfers: r.transfers, timeSource: r.timeSource });
+          legs: r.legs || [], transfers: r.transfers, timeSource: r.timeSource, route: r });
       } else {
         groups[byStation[k]].names.push(r.name);
       }
     });
     groups.sort(function (a, b) { return b.min - a.min; });
+    /* 줄을 눌러 경로를 펼칠 때 이 배열에서 찾는다 (data-g 인덱스) */
+    state.groups = groups;
 
     /* 먼 사람이 바깥, 가까운 사람이 만날 역 쪽. 위아래로 번갈아 배치한다.
        groups 는 소요시간 내림차순이므로
@@ -586,23 +609,26 @@
     var plan = [];
     top.forEach(function (g, i) {
       var inner = top[i + 1] ? top[i + 1].min : 0;
-      html += stopRow(g, { marginBottom: gapFor(g.min, inner) }, ringStyle([boardColor(g)]));
+      html += stopRow(g, { marginBottom: gapFor(g.min, inner) }, ringStyle([boardColor(g)]), groups.indexOf(g));
       plan.push({ legs: g.legs, toward: 'down' });
     });
-    html += '<div class="stop hit"><div class="who">' + esc(spot.station.name) + '</div>' +
+    html += '<div class="stop hit"><div class="stopmain">' +
+      '<div class="who">' + esc(spot.station.name) + '</div>' +
       '<div class="node"' + (hubRing ? ' style="' + hubRing + '"' : '') + '></div>' +
-      '<div class="mins">여기서 만나기</div></div>';
+      '<div class="mins">여기서 만나기</div></div></div>';
     plan.push(null);
     bottom.forEach(function (g, i) {
       var inner = i === 0 ? 0 : bottom[i - 1].min;
-      html += stopRow(g, { marginTop: gapFor(g.min, inner) }, ringStyle([boardColor(g)]));
+      html += stopRow(g, { marginTop: gapFor(g.min, inner) }, ringStyle([boardColor(g)]), groups.indexOf(g));
       plan.push({ legs: g.legs, toward: 'up' });
     });
     $('rmap').innerHTML = html;
     $('rmap').classList.add('on');
 
     /* 레일 색칠은 실제 노드 위치를 재야 해서 렌더 뒤에 한다.
-       결과 화면이 막 켜진 직후엔 아직 레이아웃 전일 수 있어 한 프레임 뒤 한 번 더 본다. */
+       결과 화면이 막 켜진 직후엔 아직 레이아웃 전일 수 있어 한 프레임 뒤 한 번 더 본다.
+       줄을 펼쳐 높이가 바뀌면 다시 칠해야 하므로 계획을 들고 있는다. */
+    state.railPlan = plan;
     if (!paintRail($('rmap'), plan)) {
       requestAnimationFrame(function () { paintRail($('rmap'), plan); });
     }
@@ -620,8 +646,15 @@
       var c = lineColor(l);
       return c ? '<i style="--c:' + c + '">' + esc(lineName(l)) + '</i>' : '';
     }).filter(Boolean);
-    $('rlegend').innerHTML = chips.join('');
+    /* 색이 무슨 뜻인지 먼저 밝힌다. 지금까지는 "가장 먼 사람이 남의 호선까지 타야 한다"
+       는 뜻으로 읽힌 적이 있었다 — 사람 동그라미는 그 사람이 자기 출발역에서 처음 타는
+       호선 색일 뿐이다. */
+    var note = '<span class="lgnote">동그라미 색 = <b>출발역에서 처음 타는 호선</b>' +
+      ' (만날 역은 지나는 노선 전부)</span>';
+    $('rlegend').innerHTML = chips.length ? note + chips.join('') : '';
     $('rlegend').hidden = !chips.length;
+
+    renderCompass(spot);
 
     var far = groups[0];
     var saved = d.worstIfSomeonesHomeMin - spot.maxMin;
@@ -667,15 +700,105 @@
       why.push('가장 먼 사람 기준으로 ' +
         '<b>' + (spot.maxMin - d.best.maxMin > 0 ? '+' : '') + (spot.maxMin - d.best.maxMin) + '분</b> 차이예요.');
     }
+    /* 후보에 출발역도 들어간다는 걸 근거에 적는다. 환승역만 본다고 오해하면
+       "우리 동네가 답인데 왜 안 나오냐" 로 이어진다. */
+    var addedOrigins = (sel.candidateSources || {}).origins || 0;
+    if (spot === d.best && addedOrigins > 0) {
+      why.push('후보에는 <b>참여자 출발역 ' + addedOrigins + '곳</b>도 함께 넣고 따졌어요 — ' +
+        '이미 다 같은 동네면 그 동네가 답이 되도록요.');
+    }
     why.push('<span style="color:#7C857A">소요시간에는 <b>환승 대기·환승 도보 시간</b>이 모두 들어 있어요.</span>');
-    $('rwhy').innerHTML = '<h4>왜 이 역인가요?</h4>' + why.join(' ');
+    $('rwhybody').innerHTML = why.join(' ');
     $('rwhy').hidden = false;
+
+    renderMarks(spot);
 
     var q = encodeURIComponent(spot.station.name);
     $('food').href = 'https://map.kakao.com/?q=' + q + '+맛집';
     $('cafe').href = 'https://map.kakao.com/?q=' + q + '+카페';
     $('acts').hidden = false;
     renderFeedback();
+  }
+
+  /* ---------------------------------------------------------- 계산 기준 배지
+   * "요금은 근사치" 라고만 써 있고 시간은 확정처럼 보인다는 피드백이 있었다.
+   * 시간이 실시간 API 에서 온 값인지 자체 그래프 근사인지 같은 자리에서 구분한다. */
+  function renderBasis(spot) {
+    var el = $('rbasis');
+    var basis = spot.timeBasis || 'graph';
+    var margin = spot.marginMin || 0;
+    var text;
+    if (basis === 'odsay') {
+      text = '실시간 대중교통 기준 · 환승 시간 포함';
+    } else if (basis === 'mixed') {
+      text = '일부는 실시간 기준 · 나머지는 각역정차 근사(대략 ±' + margin + '분)';
+    } else if (basis === 'none') {
+      text = '모두 같은 역에서 출발해 이동이 없어요';
+    } else {
+      text = '각역정차 근사 · 대략 ±' + margin + '분 (환승 시간 포함)';
+    }
+    el.className = 'basis' + (basis === 'odsay' ? ' live' : '');
+    el.textContent = text;
+    el.hidden = false;
+  }
+
+  /* ---------------------------------------------------------- 방위 힌트
+   * 다이어그램 자체는 지도가 아니다(세로축이 시간이다). 그래서 "위쪽이 북쪽" 같은
+   * 거짓말은 하지 않고, 좌표로 실제 방향 하나만 알려준다:
+   * 참여자들의 평균 위치에서 만날 역이 어느 쪽인가. */
+  var DIRS = [
+    ['북', '↑'], ['북동', '↗'], ['동', '→'], ['남동', '↘'],
+    ['남', '↓'], ['남서', '↙'], ['서', '←'], ['북서', '↖'],
+  ];
+  function renderCompass(spot) {
+    var el = $('rcompass');
+    var pts = (spot.routes || []).filter(function (r) {
+      return typeof r.originLat === 'number' && typeof r.originLng === 'number';
+    });
+    var st = spot.station || {};
+    if (!pts.length || typeof st.lat !== 'number' || typeof st.lng !== 'number') {
+      el.hidden = true;
+      return;
+    }
+    var lat = 0, lng = 0;
+    pts.forEach(function (r) { lat += r.originLat; lng += r.originLng; });
+    lat /= pts.length; lng /= pts.length;
+
+    /* 위도 1도 ≈ 111km, 경도는 위도에 따라 줄어든다. 수 km 규모라 이 근사로 충분하다. */
+    var dy = (st.lat - lat) * 111;
+    var dx = (st.lng - lng) * 111 * Math.cos(lat * Math.PI / 180);
+    var km = Math.sqrt(dx * dx + dy * dy);
+    if (km < 1.2) {
+      el.innerHTML = '<em>🧭</em> 만날 역은 <b>참여자들 한가운데</b>예요 · 위 그림은 지도가 아닙니다';
+      el.hidden = false;
+      return;
+    }
+    var deg = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+    var dir = DIRS[Math.round(deg / 45) % 8];
+    el.innerHTML = '<em>' + dir[1] + '</em> 만날 역은 참여자 평균 위치에서 <b>' + dir[0] + '쪽 ' +
+      km.toFixed(1) + 'km</b> · 위 그림은 지도가 아닙니다';
+    el.hidden = false;
+  }
+
+  /* ---------------------------------------------------------- 시간 외 표식 · 막차
+   * 상권 데이터로 후보를 정렬하는 건 다음 라운드다. 지금은 이미 가진 것
+   * (지나는 노선 수, 손으로 고른 번화가 목록)으로 표식만 단다.
+   * 막차는 계산이 아니라 노선 등급별 통상 범위다 — 그래서 '대략' 을 반드시 붙인다. */
+  function renderMarks(spot) {
+    var el = $('rmarks');
+    var t = spot.tags || {};
+    var parts = [];
+    if (t.transferLines >= 2) parts.push('<span class="tag">환승 <b>' + t.transferLines + '개 노선</b></span>');
+    else if (t.transferLines === 1) parts.push('<span class="tag"><b>단일 노선</b> 역</span>');
+    if (t.busyArea) parts.push('<span class="tag"><b>번화가</b></span>');
+
+    var lt = spot.lastTrain || {};
+    if (lt.lines && lt.lines.length) {
+      var rows = lt.lines.map(function (x) { return esc(x.lineName) + ' ' + esc(x.approx); }).join(' · ');
+      parts.push('<div class="last">막차 <b>대략</b> — ' + rows + '<br>' + esc(lt.note || '') + '</div>');
+    }
+    el.innerHTML = parts.join('');
+    el.hidden = !parts.length;
   }
 
   /* ------------------------------------------------------------ 결과 피드백 */
@@ -735,7 +858,7 @@
     fbThanks('고마워요! 더 나은 추천에 쓸게요');
   });
 
-  function stopRow(g, style, nodeStyle) {
+  function stopRow(g, style, nodeStyle, gi) {
     var names = g.legs.map(function (l) { return l.lineName; });
     var uniq = names.filter(function (v, i) { return names.indexOf(v) === i; }).join(' → ');
     var css = [];
@@ -750,22 +873,142 @@
     var hop = g.min === 0 ? '' : ' · ' + (g.transfers ? '환승 ' + g.transfers + '회' : '직통');
     var parts = [g.min + '분' + via + hop];
     if (g.fare) parts.push(won(g.fare));
-    return '<div class="stop"' + (css.length ? ' style="' + css.join(';') + '"' : '') + '>' +
+    /* 각자 경로는 눌렀을 때 만든다.
+       미리 그려두면 접혀 있어도 이름·역 이름이 DOM 에 남아 다이어그램 한 줄이
+       실제보다 길어 보이고, 안 볼 사람 몫까지 매번 만들게 된다. */
+    var can = g.legs.length > 0;
+    return '<div class="stop' + (can ? ' can' : '') + '" data-g="' + gi + '"' +
+      (can ? ' tabindex="0" role="button" aria-expanded="false"' : '') +
+      (css.length ? ' style="' + css.join(';') + '"' : '') + '>' +
+      '<div class="stopmain">' +
       '<div class="who">' + esc(g.names.join('·')) +
-      '<small>' + esc(g.origin) + '</small></div>' +
+      '<small>' + esc(g.origin) + (can ? ' <span class="more">경로 보기</span>' : '') + '</small></div>' +
       '<div class="node"' + (nodeStyle ? ' style="' + nodeStyle + '"' : '') + '></div>' +
-      '<div class="mins">' + parts.join(' · ') + '</div></div>';
+      '<div class="mins">' + parts.join(' · ') + '</div></div></div>';
   }
 
+  /* 한 사람의 실제 경로 — 어디서 갈아타는지, 몇 정거장인지.
+   * 이미 응답에 다 들어 있던 값이라 새로 계산하지 않는다. 보여주기만 한다. */
+  function legsHtml(g) {
+    var r = g.route || {};
+    var legs = g.legs || [];
+    if (!legs.length) return '';
+    var rows = legs.map(function (l, i) {
+      var tf = i ? '<div class="tf">↕ ' + esc(legs[i - 1].to) + ' 에서 환승</div>' : '';
+      var c = safeColor(l.color) || '#B9C1B5';
+      return tf + '<div class="leg"><i style="--c:' + c + '"></i><div><b>' + esc(l.lineName) + '</b> · ' +
+        esc(l.from) + ' → ' + esc(l.to) + ' · ' + (l.stops || 1) + '개 역' +
+        (l.estimated ? ' <span style="color:#7C857A">(추정 구간)</span>' : '') + '</div></div>';
+    });
+    /* 시간과 경로의 출처가 다를 수 있다 — ODsay 는 시간·요금만 주고 버스 구간은
+       내려주지 않으므로, 아래 경로는 지하철 기준이라는 걸 밝혀야 거짓말이 안 된다. */
+    var cap = r.timeSource === 'odsay'
+      ? '시간은 실시간 대중교통 기준이고, 아래 경로는 지하철 기준 최단 경로예요 (버스 구간은 표시하지 않아요).'
+      : '각역정차 기준 · 대략 ±' + (r.marginMin || 0) + '분' +
+        (r.estimated ? ' · 추정 구간이 섞여 있어요' : '');
+    return '<div class="legs">' + rows.join('') + '<span class="cap">' + cap + '</span></div>';
+  }
+
+  /** 참여자 줄을 눌러 그 사람의 경로를 펼친다 (다시 누르면 접힌다) */
+  function toggleStop(row) {
+    var g = state.groups[+row.dataset.g];
+    if (!g) return;
+    var open = row.classList.toggle('open');
+    row.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var more = row.querySelector('.more');
+    if (more) more.textContent = open ? '접기' : '경로 보기';
+    var box = row.querySelector('.legs');
+    if (open) {
+      if (!box) row.insertAdjacentHTML('beforeend', legsHtml(g));
+      else box.hidden = false;
+    } else if (box) {
+      box.hidden = true;
+    }
+    // 줄 높이가 바뀌었으니 레일 색 경계를 다시 잰다
+    if (state.railPlan) requestAnimationFrame(function () { paintRail($('rmap'), state.railPlan); });
+  }
+
+  $('rmap').addEventListener('click', function (e) {
+    var row = e.target.closest('.stop.can');
+    if (row) toggleStop(row);
+  });
+  $('rmap').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var row = e.target.closest && e.target.closest('.stop.can');
+    if (row) { e.preventDefault(); toggleStop(row); }
+  });
+
+  /** 공유하는 링크는 항상 결과 직행이다 (?m=토큰&r=1). */
+  function resultUrl() {
+    return location.origin + location.pathname + '?m=' + state.token + '&r=1';
+  }
+  function shareTitle() {
+    return (state.meeting ? state.meeting.name : '모임') + ' — 가운데';
+  }
+
+  $('rcopy').addEventListener('click', function () {
+    var btn = this, text = $('rlinktext').textContent;
+    var done = function () { btn.textContent = '복사됨'; setTimeout(function () { btn.textContent = '복사'; }, 1600); };
+    track('share_clicked');
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, done);
+    else done();
+  });
+
+  /* ---------------------------------------------------------- 카카오톡 공유
+   * 카카오 JavaScript 앱키(window.KAKAO_KEY)가 있을 때만 SDK 를 불러온다.
+   * 키는 코드에 박지 않는다 — config.js 나 다른 스크립트가 넣어준다.
+   * 키가 없으면 버튼 자체가 안 보이고 기존 이미지+링크 공유만 남는다. */
+  var kakaoReady = false;
+  function showKakao() {
+    var on = kakaoReady && !!state.token;
+    $('kshare').hidden = !on;
+    $('kgap').hidden = !on;
+  }
+  (function initKakao() {
+    var key = window.KAKAO_KEY;
+    if (!key) return;
+    var s = document.createElement('script');
+    s.src = 'https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js';
+    s.crossOrigin = 'anonymous';
+    s.onload = function () {
+      try {
+        if (window.Kakao && !window.Kakao.isInitialized()) window.Kakao.init(key);
+        kakaoReady = !!(window.Kakao && window.Kakao.Share);
+      } catch (e) { kakaoReady = false; }
+      if (state.result) showKakao();
+    };
+    s.onerror = function () { kakaoReady = false; };
+    document.head.appendChild(s);
+  })();
+
+  $('kshare').addEventListener('click', function () {
+    if (!kakaoReady) return;
+    var btn = this, label = btn.textContent;
+    var spot = state.shownSpot;
+    var url = resultUrl();
+    track('share_kakao');
+    try {
+      window.Kakao.Share.sendDefault({
+        objectType: 'text',
+        text: shareTitle() + '\n' +
+          (spot ? spot.station.name + '에서 만나요 · 가장 먼 사람 ' + spot.maxMin + '분' : '결과 보기'),
+        link: { mobileWebUrl: url, webUrl: url },
+      });
+    } catch (e) {
+      btn.textContent = '카카오톡을 열지 못했어요';
+      setTimeout(function () { btn.textContent = label; }, 2000);
+    }
+  });
+
   /* 결과 카드를 이미지로 떠서 공유한다.
-   * 카카오 SDK·키는 쓰지 않는다. Web Share Level 2(files) 가 되면 공유 시트로,
+   * Web Share Level 2(files) 가 되면 공유 시트로,
    * 안 되면(대부분의 PC) 이미지를 내려받고 링크를 복사한다. */
   $('share').addEventListener('click', function () {
     var btn = this;
     track('share_clicked');
     var label = btn.textContent;
-    var url = location.origin + location.pathname + '?m=' + state.token + '&r=1';
-    var title = (state.meeting ? state.meeting.name : '모임') + ' — 가운데';
+    var url = resultUrl();
+    var title = shareTitle();
 
     var finish = function (msg) {
       btn.textContent = msg;
@@ -805,17 +1048,26 @@
 
   function captureShot() {
     var el = $('shot');
+    /* 근거 블록은 화면에서는 접혀 있지만 공유 이미지에는 들어가야 한다 —
+       이미지를 받는 사람은 펼칠 수가 없다. 뜨는 동안만 열고 원래대로 되돌린다. */
+    var why = $('rwhy');
+    var wasOpen = why.open;
+    why.open = true;
     el.classList.add('capturing');
+    var restore = function () {
+      el.classList.remove('capturing');
+      why.open = wasOpen;
+    };
     return html2canvas(el, {
       backgroundColor: '#FFFFFF',
       scale: Math.min(2, window.devicePixelRatio || 1),
       logging: false,
       useCORS: false,
     }).then(function (canvas) {
-      el.classList.remove('capturing');
+      restore();
       return new Promise(function (resolve) { canvas.toBlob(resolve, 'image/png'); });
     }, function (e) {
-      el.classList.remove('capturing');
+      restore();
       throw e;
     });
   }
@@ -826,6 +1078,8 @@
     history.replaceState(null, '', location.pathname);
     state.token = null; state.meeting = null; state.picked = null;
     state.result = null; state.shownSpot = null; state.editingId = null; state.myId = null;
+    state.groups = []; state.railPlan = null;
+    $('rlink').hidden = true; $('kshare').hidden = true; $('kgap').hidden = true;
     $('made').hidden = true; $('goto1').hidden = true;
     $('make').textContent = '링크 만들기';
     $('dep').value = ''; checkSubmit();

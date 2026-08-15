@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { MetroGraph, normalizeName } from './graph.mjs';
 import { openStore, TRACKED_EVENTS, deviceKey } from './db.mjs';
 import { createRouter } from './routing/index.mjs';
-import { TOLERANCE_MIN, FARE } from './config.mjs';
+import { TOLERANCE_MIN, FARE, LAST_TRAIN_APPROX, BUSY_AREA_NAMES } from './config.mjs';
 import { parseRange } from './daterange.mjs';
 import { lookupEgressIp } from './egress-ip.mjs';
 
@@ -115,7 +115,7 @@ async function track(event, meeting, meta) {
 const RESULT_CACHE_TTL_DAYS = 7;
 /* 응답 모양이 바뀌면 옛 스냅샷은 새 화면과 맞지 않는다(후보 개수·환승 필드 등).
    모양을 바꿀 때마다 올려서 캐시를 통째로 무효화한다. */
-const RESULT_SHAPE_REV = 2;
+const RESULT_SHAPE_REV = 3;
 const graphFingerprint = graph.meta.generatedAt || '';
 const resultCacheStats = { hits: 0, misses: 0 };
 
@@ -127,6 +127,22 @@ function participantsHash(participants) {
     .update(`v${RESULT_SHAPE_REV}\n${graphFingerprint}\n${parts.join('\n')}`)
     .digest('hex')
     .slice(0, 32);
+}
+
+/* 번화가 표식은 이름으로 대조한다 — 그래프를 다시 빌드해도 id 와 달리 안 밀린다. */
+const BUSY_AREAS = new Set(BUSY_AREA_NAMES.map(normalizeName));
+
+/**
+ * 추천역의 노선별 막차 — 정적 근사치.
+ *
+ * 시각표 데이터가 없으므로 "막차를 놓치는가" 는 계산하지 않는다.
+ * 노선 등급별 통상 범위만 내려주고, 화면은 이 값을 늘 '대략' 으로 표시한다.
+ * 범위를 모르는 노선은 아예 빼서, 모르는 걸 지어내지 않는다.
+ */
+function lastTrainFor(lines) {
+  return lines
+    .map((l) => ({ line: l, lineName: graph.lines[l]?.name || l, approx: LAST_TRAIN_APPROX.byLine[l] }))
+    .filter((x) => x.approx);
 }
 
 /** 이름이나 id 로 역을 찾는다. 동명이역이면 후보를 함께 돌려준다. */
@@ -147,7 +163,7 @@ function resolveStation(input) {
 /* ------------------------------------------------------------------ 라우트 */
 
 /** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
-const REV = 'result-view-1';
+const REV = 'feedback-round-2';
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, rev: REV, db: dbKind, stations: graph.stations.length,
@@ -321,32 +337,64 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
   const result = await router.findMeetingPoint(originIds, { topN: 3 });
   if (!result) return res.status(500).json({ error: '중간지점을 계산하지 못했습니다.' });
 
-  const shapeSpot = (spot) => ({
-    station: { id: spot.station.id, name: spot.station.name, lat: spot.station.lat, lng: spot.station.lng, lines: spot.station.lines },
-    maxMin: Math.round(spot.maxSec / 60),
-    avgMin: Math.round(spot.avgSec / 60),
-    totalMin: Math.round(spot.sumSec / 60),
-    fareAvg: spot.fareAvg,
-    fareTotal: spot.fareTotal,
-    inBand: spot.inBand,
-    routes: spot.routes.map((r, i) => ({
-      participantId: participants[i].id,
-      name: participants[i].name,
-      origin: r.origin,
-      originId: r.originId,
-      min: Math.round(r.sec / 60),
-      fare: r.fare,
-      surcharges: r.surcharges,
-      timeSource: r.timeSource ?? 'graph',
-      // ODsay 로 계산된 경로면 실제 환승 횟수, 아니면 그래프가 찾은 경로의 환승 횟수
-      transfers: Number.isFinite(r.transfersOverride) ? r.transfersOverride : (r.path?.transfers ?? 0),
-      estimated: !!r.path?.legs.some((l) => l.hasEstimate),
-      legs: (r.path?.legs ?? []).map((l) => ({
-        line: l.line, lineName: l.lineName, color: l.color,
-        from: l.from, to: l.to, stops: l.stops,
-      })),
-    })).sort((a, b) => b.min - a.min),
-  });
+  const shapeSpot = (spot) => {
+    const routes = spot.routes.map((r, i) => {
+      const timeSource = r.timeSource ?? 'graph';
+      return {
+        participantId: participants[i].id,
+        name: participants[i].name,
+        origin: r.origin,
+        originId: r.originId,
+        /* 방위 힌트용 좌표. 지도를 그리는 게 아니라 "만날 역이 어느 쪽인가" 만 낸다. */
+        originLat: graph.stations[r.originId]?.lat ?? null,
+        originLng: graph.stations[r.originId]?.lng ?? null,
+        min: Math.round(r.sec / 60),
+        fare: r.fare,
+        surcharges: r.surcharges,
+        timeSource,
+        /* 시간 오차 폭. ODsay 실시간 값에는 붙이지 않는다 — 그건 근사가 아니다.
+           같은 역이면 이동이 없으니 0. */
+        marginMin: timeSource === 'graph' ? Math.round((r.marginSec ?? 0) / 60) : 0,
+        // ODsay 로 계산된 경로면 실제 환승 횟수, 아니면 그래프가 찾은 경로의 환승 횟수
+        transfers: Number.isFinite(r.transfersOverride) ? r.transfersOverride : (r.path?.transfers ?? 0),
+        estimated: !!r.path?.legs.some((l) => l.hasEstimate),
+        legs: (r.path?.legs ?? []).map((l) => ({
+          line: l.line, lineName: l.lineName, color: l.color,
+          from: l.from, to: l.to, stops: l.stops, estimated: !!l.hasEstimate,
+        })),
+      };
+    }).sort((a, b) => b.min - a.min);
+
+    /* 이 후보의 시간을 무엇으로 냈는가 — 화면 배지가 이 값 하나만 보고 문구를 고른다.
+       "요금은 근사치" 라고만 써 있고 시간은 확정처럼 보인다는 피드백에 대한 답이다.
+       움직이지 않는 사람(same-station)은 판정에서 뺀다. */
+    const moving = routes.filter((r) => r.timeSource !== 'same-station');
+    const live = moving.filter((r) => r.timeSource === 'odsay').length;
+    const timeBasis = !moving.length ? 'none'
+      : live === moving.length ? 'odsay'
+        : live > 0 ? 'mixed' : 'graph';
+
+    return {
+      station: { id: spot.station.id, name: spot.station.name, lat: spot.station.lat, lng: spot.station.lng, lines: spot.station.lines },
+      maxMin: Math.round(spot.maxSec / 60),
+      avgMin: Math.round(spot.avgSec / 60),
+      totalMin: Math.round(spot.sumSec / 60),
+      fareAvg: spot.fareAvg,
+      fareTotal: spot.fareTotal,
+      inBand: spot.inBand,
+      timeBasis,
+      /* 그래프로 낸 사람 중 가장 큰 오차 폭. 화면에는 "대략 ±N분" 으로 나간다. */
+      marginMin: Math.max(0, ...routes.map((r) => r.marginMin)),
+      /* 시간 말고 다른 기준 — 순위에는 쓰지 않고 표식만 단다 */
+      tags: {
+        transferLines: spot.station.lines.length,
+        busyArea: BUSY_AREAS.has(normalizeName(spot.station.name)),
+      },
+      /* 막차는 계산이 아니라 통상 범위 표시다. 화면 문구에 '대략' 이 반드시 붙는다. */
+      lastTrain: { note: LAST_TRAIN_APPROX.note, lines: lastTrainFor(spot.station.lines) },
+      routes,
+    };
+  };
 
   // 결과가 실제로 나온 경우에만 기록한다 (참여자 2명 미만이면 위에서 이미 400 으로 빠진다).
   await track('result_viewed', meeting, {

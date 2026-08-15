@@ -18,7 +18,8 @@
  *   호출이 깨진 역쌍만 조용히 그래프 값으로 되돌린다. 전체가 죽지 않는다.
  */
 import { GraphRouter } from './graph-router.mjs';
-import { ODSAY } from '../config.mjs';
+import { diversifyRanked } from '../graph.mjs';
+import { ODSAY, DIVERSIFY_CANDIDATES } from '../config.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -341,7 +342,13 @@ export class OdsayRouter extends GraphRouter {
       a.sumSec - b.sumSec || a.fareTotal - b.fareTotal || a.maxSec - b.maxSec);
     const rest = rescored.filter((s) => !s.inBand).sort((a, b) =>
       a.maxSec - b.maxSec || a.sumSec - b.sumSec);
-    const ranked = band.concat(rest);
+
+    /* 그래프와 같은 다양성 규칙을 밴드 안에만 적용한다 (1위는 그대로).
+       ODsay 시간으로 다시 매긴 순위에도 같은 쏠림이 생기므로 여기서도 섞는다. */
+    const div = (opts.diversify ?? DIVERSIFY_CANDIDATES)
+      ? diversifyRanked(band, topN, (s) => s.station.lines)
+      : { list: band, grouped: 0, reordered: false };
+    const ranked = div.list.concat(rest);
 
     const odsayRoutes = rescored.reduce(
       (n, s) => n + s.routes.filter((r) => r.timeSource === 'odsay').length, 0);
@@ -367,6 +374,7 @@ export class OdsayRouter extends GraphRouter {
         odsayPairs: table.size,
         odsayRoutes,
         fareSource,
+        diversity: { grouped: div.grouped, reordered: div.reordered },
       },
       worstPairwiseSec: base.worstPairwiseSec,
     };

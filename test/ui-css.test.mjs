@@ -66,6 +66,16 @@ describe('CSS 가시성 불변식', () => {
       `기본 상태가 투명한 규칙: ${offenders.join(' / ')} — 애니메이션이 없으면 안 보인다`);
   });
 
+  test('참여자 줄은 가로 배치를 .stopmain 에 맡긴다 (경로 펼침이 줄을 깨지 않게)', () => {
+    /* .stop 이 직접 flex 면 아래에 붙는 경로 상세가 같은 줄로 밀려 들어간다.
+       .node 의 offsetParent 는 .stop(position:relative) 이어야 레일 색칠 계산이 유효하다. */
+    const stop = body.match(/(^|\})\s*\.stop\s*\{([^}]*)\}/);
+    assert.ok(stop, '.stop 규칙을 찾지 못했다');
+    assert.match(stop[2], /position:\s*relative/, '.stop 이 position:relative 가 아니다');
+    assert.ok(!/display:\s*flex/.test(stop[2]), '.stop 이 아직 직접 flex 다');
+    assert.match(body, /\.stopmain\s*\{[^}]*display:\s*flex/, '.stopmain 가로 배치 규칙이 없다');
+  });
+
   test('.stop 은 animation-fill-mode:backwards 로 "들어오는 동안만" 숨긴다', () => {
     const rule = body.match(/(^|\})\s*\.stop\s*\{([^}]*)\}/);
     assert.ok(rule, '.stop 규칙을 찾지 못했다');
@@ -169,8 +179,34 @@ describe('다이어그램 읽기 보조', () => {
     assert.match(body, /\.node::after\s*\{[^}]*background:#fff/, '가운데 흰 원(::after)이 없다');
   });
 
+  test('범례가 노선도보다 위에 있다', () => {
+    /* 그림을 다 읽은 뒤에 색 설명을 만나면 이미 잘못 읽은 뒤다.
+       색의 뜻이 먼저 와야 한다. */
+    const iLegend = html.indexOf('id="rlegend"');
+    const iMap = html.indexOf('id="rmap"');
+    assert.ok(iLegend > 0 && iMap > 0);
+    assert.ok(iLegend < iMap, '범례(#rlegend)가 노선도(#rmap) 아래에 있다');
+  });
+
+  test('선정 근거는 접었다 펼치는 <details> 다', () => {
+    // 첫 화면은 간결해야 한다는 피드백. 내용은 그대로 두고 기본만 접는다.
+    const tag = html.match(/<details[^>]*id="rwhy"[^>]*>/);
+    assert.ok(tag, '#rwhy 가 <details> 가 아니다');
+    assert.ok(!/\bopen\b/.test(tag[0]), '#rwhy 가 기본 펼침이다');
+    assert.match(html, /<summary>왜 이 역인가요\?<\/summary>/, '요약 제목(summary)이 없다');
+    assert.match(html, /id="rwhybody"/, '근거 본문 컨테이너가 없다');
+  });
+
+  test('핵심 수치가 본문보다 크게 잡혀 있다', () => {
+    const rule = body.match(/\.keys b\s*\{([^}]*)\}/);
+    assert.ok(rule, '.keys b 규칙을 찾지 못했다');
+    const size = Number((rule[1].match(/font-size:\s*([\d.]+)px/) || [])[1]);
+    const lede = Number((body.match(/\.lede\s*\{[^}]*font-size:\s*([\d.]+)px/) || [])[1]);
+    assert.ok(size >= lede + 5, `핵심 수치(${size}px)가 설명문(${lede}px)보다 충분히 크지 않다`);
+  });
+
   test('시간축·범례·근거 블록이 기본 숨김으로 마크업돼 있다', () => {
-    for (const id of ['raxis', 'rlegend', 'rwhy']) {
+    for (const id of ['raxis', 'rlegend', 'rwhy', 'rkeys', 'rbasis', 'rcompass', 'rmarks']) {
       const tag = html.match(new RegExp('id="' + id + '"[^>]*>'));
       assert.ok(tag, `#${id} 마크업이 없다`);
       assert.match(tag[0], /hidden/, `#${id} 가 기본 숨김이 아니다 — 계산 전에 빈 상자가 보인다`);
@@ -181,9 +217,53 @@ describe('다이어그램 읽기 보조', () => {
     // html2canvas 는 #shot 만 뜬다. 밖에 두면 공유 이미지에서 설명이 빠진다.
     const shot = html.match(/id="shot"[\s\S]*?<\/div>\s*<!-- 위치 A/);
     assert.ok(shot, '#shot 영역을 찾지 못했다');
-    for (const id of ['raxis', 'rlegend', 'rwhy']) {
+    for (const id of ['raxis', 'rlegend', 'rwhy', 'rkeys', 'rbasis', 'rcompass', 'rmarks']) {
       assert.ok(shot[0].includes('id="' + id + '"'), `#${id} 가 #shot 밖에 있다`);
     }
+  });
+
+  test('맛집·카페 버튼이 어디로 가는지 적혀 있다', () => {
+    // 눌러보기 전에는 카카오맵이 열린다는 걸 알 수 없었다
+    for (const id of ['food', 'cafe']) {
+      const tag = html.match(new RegExp('id="' + id + '"[^>]*>([^<]*<small>[^<]*</small>)?'));
+      assert.ok(tag, `#${id} 마크업이 없다`);
+    }
+    const acts = html.match(/<div class="acts"[\s\S]*?<\/div>/);
+    assert.equal((acts[0].match(/카카오맵에서 보기/g) || []).length, 2,
+      '맛집·카페 두 버튼 모두에 "카카오맵에서 보기" 가 있어야 한다');
+  });
+
+  test('개인정보 한 줄이 입력 화면과 결과 화면에 다 있다', () => {
+    const priv = html.match(/<p class="priv">[\s\S]*?<\/p>/g) || [];
+    assert.ok(priv.length >= 2, `개인정보 문구가 ${priv.length}곳뿐이다 (입력·결과 두 화면 필요)`);
+    for (const p of priv) {
+      assert.match(p, /이름과 출발역/, '무엇을 수집하는지 적혀 있지 않다');
+      assert.match(p, /IP·쿠키/, '무엇을 수집하지 않는지 적혀 있지 않다');
+      /* 기기 식별자는 실제로 localStorage 에 남는다. 안 남는다고 쓰면 거짓말이 된다. */
+      assert.match(p, /식별자/, '브라우저에 남는 식별자를 밝히지 않았다');
+    }
+  });
+
+  test('상단 진행 표시가 점 3개(⋯ 메뉴)로 보이지 않는다', () => {
+    /* 우측 상단 동그란 점 3개가 "⋯ 메뉴" 로 읽혀 눌러도 아무 일이 없다는 피드백.
+       납작한 막대로 두어 진행 표시로만 읽히게 한다. */
+    const rule = body.match(/(^|\})\s*\.dot\s*\{([^}]*)\}/);
+    assert.ok(rule, '.dot 규칙을 찾지 못했다');
+    assert.ok(!/border-radius:\s*50%/.test(rule[2]), '.dot 이 아직 원형이다');
+    const w = Number((rule[2].match(/width:\s*([\d.]+)px/) || [])[1]);
+    const h = Number((rule[2].match(/height:\s*([\d.]+)px/) || [])[1]);
+    assert.ok(w >= h * 2, `.dot 이 가로로 길지 않다 (${w}×${h})`);
+  });
+
+  test('카카오 앱키를 코드에 박지 않는다', () => {
+    /* 시크릿은 아니지만 도메인이 묶인 키라 저장소에 박아두면 갈아끼우기 어렵다.
+       app.js 는 window.KAKAO_KEY 만 읽어야 한다. */
+    const app = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
+    assert.match(app, /window\.KAKAO_KEY/, 'app.js 가 주입된 키를 읽지 않는다');
+    const cfg = fs.readFileSync(path.join(ROOT, 'public', 'config.js'), 'utf8');
+    const assigned = cfg.match(/window\.KAKAO_KEY\s*=\s*window\.KAKAO_KEY\s*\|\|\s*'([^']*)'/);
+    assert.ok(assigned, 'config.js 에 KAKAO_KEY 자리가 없다');
+    assert.equal(assigned[1], '', '저장소에 실제 키가 커밋돼 있다');
   });
 
   test('범례 점 색은 인라인 --c 토큰으로 받는다', () => {
