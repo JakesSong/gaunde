@@ -374,13 +374,12 @@
   function showResult(opts) {
     var expectCached = (opts && opts.expectCached) || !!localStorage.getItem(seenKey());
     go(2);
-    if (expectCached) {
-      $('rtitle').textContent = '결과 불러오는 중…';
-      $('rlede').textContent = '';
-    } else {
-      $('rtitle').textContent = '계산하는 중…';
-      $('rlede').textContent = '잠시만요, 후보 역을 하나씩 비교하고 있어요';
-    }
+    /* 결과 화면에 헤더는 없다 — 요약은 아래 수치 타일 두 칸이 한다.
+       그래서 "아직 결과가 없다" 는 사실만 이 한 줄로 세워 둔다. */
+    $('rstat').textContent = expectCached
+      ? '결과 불러오는 중…'
+      : '계산하는 중… 후보 역을 하나씩 비교하고 있어요';
+    $('rstat').hidden = false;
     $('alts').hidden = true;
     $('acts').hidden = true;
     $('fb').hidden = true;
@@ -389,7 +388,6 @@
     $('rwhy').hidden = true;
     $('rkeys').hidden = true;
     $('rbasis').hidden = true;
-    $('rcompass').hidden = true;
     $('rmarks').hidden = true;
     $('rlink').hidden = true;
     showErr('err2', '');
@@ -417,12 +415,12 @@
         showKakao();
       })
       .catch(function (e) {
-        $('rtitle').textContent = '아직 계산할 수 없습니다';
-        $('rlede').textContent = '';
+        $('rstat').textContent = '아직 계산할 수 없습니다';
+        $('rstat').hidden = false;
         $('rmap').innerHTML = '<div class="rail"></div><div class="railfill"></div>';
         $('raxis').hidden = true; $('rlegend').hidden = true; $('rwhy').hidden = true;
         $('rkeys').hidden = true; $('rbasis').hidden = true;
-        $('rcompass').hidden = true; $('rmarks').hidden = true;
+        $('rmarks').hidden = true;
         $('verdict').textContent = e.message;
       });
   }
@@ -522,14 +520,12 @@
   function renderSpot(spot) {
     var d = state.result;
     state.shownSpot = spot;
-    var n = d.meeting.participants.length;
     var sel = d.selection || {};
 
-    $('rtitle').innerHTML = '가장 먼 사람도 <em>' + spot.maxMin + '분</em>';
-
-    /* 상단은 압축한다 — 문장 한 줄 + 큰 숫자 두 개.
-       예전에는 평균·요금·계산기준이 한 문장에 다 들어가 아무것도 눈에 안 띄었다. */
-    $('rlede').textContent = n + '명 · 평균 ' + spot.avgMin + '분';
+    /* 상단은 수치 타일 두 칸이 전부다. 예전에는 그 위에 큰 제목("가장 먼 사람도 N분")과
+       설명문("N명 · 평균 N분")이 더 있었는데, 타일이 같은 숫자를 다시 말하는 중복이라
+       "정보가 너무 많다" 는 피드백의 첫 항목이었다. 헤더를 없애고 타일만 남긴다. */
+    $('rstat').hidden = true;
     $('rkeys').innerHTML =
       '<div class="hi"><b>' + spot.maxMin + '분</b><span>가장 먼 사람</span></div>' +
       '<div><b>' + won(spot.fareAvg) + '</b><span>1인 요금' +
@@ -646,15 +642,10 @@
       var c = lineColor(l);
       return c ? '<i style="--c:' + c + '">' + esc(lineName(l)) + '</i>' : '';
     }).filter(Boolean);
-    /* 색이 무슨 뜻인지 먼저 밝힌다. 지금까지는 "가장 먼 사람이 남의 호선까지 타야 한다"
-       는 뜻으로 읽힌 적이 있었다 — 사람 동그라미는 그 사람이 자기 출발역에서 처음 타는
-       호선 색일 뿐이다. */
-    var note = '<span class="lgnote">동그라미 색 = <b>출발역에서 처음 타는 호선</b>' +
-      ' (만날 역은 지나는 노선 전부)</span>';
-    $('rlegend').innerHTML = chips.length ? note + chips.join('') : '';
+    /* 색칩만 남긴다. 무슨 색이 무슨 호선인지는 레일을 해독하려면 필요하지만,
+       "동그라미 색 = 출발역에서 처음 타는 호선" 같은 긴 해설은 화면을 무겁게만 했다. */
+    $('rlegend').innerHTML = chips.join('');
     $('rlegend').hidden = !chips.length;
-
-    renderCompass(spot);
 
     var far = groups[0];
     var saved = d.worstIfSomeonesHomeMin - spot.maxMin;
@@ -742,48 +733,13 @@
     el.hidden = false;
   }
 
-  /* ---------------------------------------------------------- 방위 힌트
-   * 다이어그램 자체는 지도가 아니다(세로축이 시간이다). 그래서 "위쪽이 북쪽" 같은
-   * 거짓말은 하지 않고, 좌표로 실제 방향 하나만 알려준다:
-   * 참여자들의 평균 위치에서 만날 역이 어느 쪽인가. */
-  var DIRS = [
-    ['북', '↑'], ['북동', '↗'], ['동', '→'], ['남동', '↘'],
-    ['남', '↓'], ['남서', '↙'], ['서', '←'], ['북서', '↖'],
-  ];
-  function renderCompass(spot) {
-    var el = $('rcompass');
-    var pts = (spot.routes || []).filter(function (r) {
-      return typeof r.originLat === 'number' && typeof r.originLng === 'number';
-    });
-    var st = spot.station || {};
-    if (!pts.length || typeof st.lat !== 'number' || typeof st.lng !== 'number') {
-      el.hidden = true;
-      return;
-    }
-    var lat = 0, lng = 0;
-    pts.forEach(function (r) { lat += r.originLat; lng += r.originLng; });
-    lat /= pts.length; lng /= pts.length;
-
-    /* 위도 1도 ≈ 111km, 경도는 위도에 따라 줄어든다. 수 km 규모라 이 근사로 충분하다. */
-    var dy = (st.lat - lat) * 111;
-    var dx = (st.lng - lng) * 111 * Math.cos(lat * Math.PI / 180);
-    var km = Math.sqrt(dx * dx + dy * dy);
-    if (km < 1.2) {
-      el.innerHTML = '<em>🧭</em> 만날 역은 <b>참여자들 한가운데</b>예요 · 위 그림은 지도가 아닙니다';
-      el.hidden = false;
-      return;
-    }
-    var deg = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
-    var dir = DIRS[Math.round(deg / 45) % 8];
-    el.innerHTML = '<em>' + dir[1] + '</em> 만날 역은 참여자 평균 위치에서 <b>' + dir[0] + '쪽 ' +
-      km.toFixed(1) + 'km</b> · 위 그림은 지도가 아닙니다';
-    el.hidden = false;
-  }
-
-  /* ---------------------------------------------------------- 시간 외 표식 · 막차
+  /* ---------------------------------------------------------- 시간 외 표식
    * 상권 데이터로 후보를 정렬하는 건 다음 라운드다. 지금은 이미 가진 것
-   * (지나는 노선 수, 손으로 고른 번화가 목록)으로 표식만 단다.
-   * 막차는 계산이 아니라 노선 등급별 통상 범위다 — 그래서 '대략' 을 반드시 붙인다. */
+   * (지나는 노선 수, 손으로 고른 번화가 목록)으로 칩 한두 개만 단다.
+   *
+   * 막차(대략) 블록은 뺐다 — 화면이 너무 빽빽하다는 피드백에서 가장 먼저 지목된 덩어리였고,
+   * 애초에 계산이 아니라 노선 등급별 통상 범위라 정확도도 값어치도 낮았다.
+   * 서버는 여전히 best.lastTrain 을 내려주지만 화면에서는 쓰지 않는다. */
   function renderMarks(spot) {
     var el = $('rmarks');
     var t = spot.tags || {};
@@ -792,11 +748,6 @@
     else if (t.transferLines === 1) parts.push('<span class="tag"><b>단일 노선</b> 역</span>');
     if (t.busyArea) parts.push('<span class="tag"><b>번화가</b></span>');
 
-    var lt = spot.lastTrain || {};
-    if (lt.lines && lt.lines.length) {
-      var rows = lt.lines.map(function (x) { return esc(x.lineName) + ' ' + esc(x.approx); }).join(' · ');
-      parts.push('<div class="last">막차 <b>대략</b> — ' + rows + '<br>' + esc(lt.note || '') + '</div>');
-    }
     el.innerHTML = parts.join('');
     el.hidden = !parts.length;
   }
