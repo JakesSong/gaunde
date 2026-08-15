@@ -186,6 +186,11 @@
   .legs .tf{padding:1px 0 1px 15px;color:var(--sub)}
   .legs .cap{display:block;margin-top:5px;color:var(--sub);font-size:10.5px;line-height:1.5}
 
+  /* ---- 상태 한 줄 (계산 중 · 못 불러옴) ----
+     결과 화면에는 헤더가 없다. 그래서 결과가 아직/영영 없을 때 화면이 통째로
+     비어 보이지 않게 이 한 줄만 세워 둔다. 결과가 오면 숨는다. */
+  .rstat{margin:0 0 12px;font-size:14px;font-weight:700;letter-spacing:-.03em;color:#4A524A}
+
   /* ---- 핵심 수치 · 계산 기준 배지 ---- */
   .keys{display:flex;gap:8px;margin:0 0 10px}
   .keys div{flex:1;min-width:0;background:var(--paper);border-radius:12px;padding:10px;text-align:center}
@@ -203,21 +208,11 @@
   .basis.live{background:var(--fb-bg);border-color:rgba(0,168,77,.35);color:var(--fb-ink)}
   .basis.live::before{background:var(--line)}
 
-  /* 방위 힌트. 그림 자체는 지도가 아니므로 "위쪽이 북쪽" 이라고 말하지 않는다.
-     대신 좌표로 실제 방향 하나만 알려준다. */
-  /* flex 로 두면 문장이 조각마다 따로 줄바꿈돼 읽기 어렵다. 한 문장으로 흐르게 둔다. */
-  .compass{margin:0 0 12px;font-size:11px;line-height:1.55;color:var(--sub);letter-spacing:-.01em}
-  .compass em{font-style:normal;font-size:12px;color:#4A524A;margin-right:3px}
-  .compass b{color:#4A524A;font-weight:700}
-
-  /* 시간 외 표식 + 막차(대략) */
+  /* 시간 외 표식 */
   .marks{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
   .tag{font-size:11px;letter-spacing:-.01em;padding:5px 9px;border-radius:999px;
     border:1px solid var(--rule);background:#fff;color:#4A524A}
   .tag b{font-weight:700;color:var(--ink)}
-  .marks .last{width:100%;border:1px dashed var(--rule);border-radius:10px;padding:8px 10px;
-    background:#FBFCFA;font-size:11px;line-height:1.6;color:var(--sub);letter-spacing:-.01em}
-  .marks .last b{color:#4A524A;font-weight:700}
 
   /* 이 그림은 지도가 아니다. 위아래는 방향이 아니라 소요시간이고,
      노드 사이 간격은 시간 차이다. 안 밝히면 지도로 읽힌다. */
@@ -233,10 +228,6 @@
     font-size:10.5px;color:var(--sub);letter-spacing:-.01em}
   .legend i{display:inline-flex;align-items:center;gap:4px;font-style:normal}
   .legend i::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--c);flex:none}
-  /* 색이 "가장 먼 사람이 남의 호선까지 탄다" 는 뜻으로 읽힌 적이 있다. 무슨 색인지가 아니라
-     무엇의 색인지를 먼저 밝힌다. ::before 동그라미가 붙지 않게 i 가 아니라 span 이다. */
-  .legend .lgnote{width:100%;margin-bottom:2px;color:#4A524A;letter-spacing:-.02em}
-  .legend .lgnote b{font-weight:700}
 
   /* 왜 이 역인지 — 첫 화면은 접어두고 누르면 펼친다 (근거는 그대로 둔다) */
   .why{margin-top:8px;background:#fff;border:1px solid var(--rule);border-radius:12px}
@@ -432,8 +423,9 @@
       <!-- shot: 이미지로 캡쳐되는 영역 -->
       <div id="shot">
         <div class="shotbrand">가운<i>데</i></div>
-        <h2 id="rtitle">계산하는 중</h2>
-        <p class="lede" id="rlede">…</p>
+        <!-- 결과가 오기 전(또는 못 올 때)에만 뜨는 한 줄. 결과가 뜨면 숨는다 —
+             요약은 아래 .keys 두 칸이 이미 하고 있어서 헤더를 따로 두지 않는다. -->
+        <p class="rstat" id="rstat" hidden></p>
 
         <div class="keys" id="rkeys" hidden></div>
         <p class="basis" id="rbasis" hidden></p>
@@ -443,7 +435,6 @@
         <div class="map" id="rmap">
           <div class="rail"></div><div class="railfill"></div>
         </div>
-        <p class="compass" id="rcompass" hidden></p>
 
         <div class="verdict" id="verdict"></div>
         <div class="marks" id="rmarks" hidden></div>
