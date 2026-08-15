@@ -359,6 +359,9 @@
     $('alts').hidden = true;
     $('acts').hidden = true;
     $('fb').hidden = true;
+    $('raxis').hidden = true;
+    $('rlegend').hidden = true;
+    $('rwhy').hidden = true;
     showErr('err2', '');
 
     api('/api/meetings/' + encodeURIComponent(state.token) + '/result')
@@ -380,6 +383,7 @@
         $('rtitle').textContent = '아직 계산할 수 없습니다';
         $('rlede').textContent = '';
         $('rmap').innerHTML = '<div class="rail"></div><div class="railfill"></div>';
+        $('raxis').hidden = true; $('rlegend').hidden = true; $('rwhy').hidden = true;
         $('verdict').textContent = e.message;
       });
   }
@@ -396,6 +400,85 @@
   });
 
   function won(v) { return v ? v.toLocaleString('ko-KR') + '원' : '0원'; }
+
+  /* ---------------------------------------------------------- 호선 색
+   * graph.json 이 노선별 실제 색(#RRGGBB)을 들고 있다. 그대로 쓰되,
+   * style 속성에 넣기 전에 모양을 확인한다 — 데이터가 곧 스타일이 되는 자리다. */
+  var HEX = /^#[0-9a-fA-F]{3,8}$/;
+  function safeColor(c) { return c && HEX.test(c) ? c : null; }
+  function lineColor(id) { return safeColor((state.lines[id] || {}).color); }
+  function lineName(id) { return (state.lines[id] || {}).name || id; }
+
+  /** 노드 링 색. 환승역처럼 호선이 여럿이면 원을 n등분해 다 보여준다. */
+  function ringStyle(colors) {
+    var cs = colors.filter(Boolean);
+    if (!cs.length) return '';
+    if (cs.length === 1) return 'background:' + cs[0];
+    var step = 100 / cs.length, parts = [];
+    cs.forEach(function (c, i) {
+      parts.push(c + ' ' + (step * i).toFixed(2) + '% ' + (step * (i + 1)).toFixed(2) + '%');
+    });
+    return 'background:conic-gradient(' + parts.join(',') + ')';
+  }
+
+  /**
+   * 레일을 실제 호선 색으로 칠한다.
+   *
+   * 각 사람의 구간을 그 사람이 갈아탄 호선들로 다시 나눈다 —
+   * 색이 바뀌는 지점이 곧 환승 지점이라, 환승이 그림에서 바로 보인다.
+   * 경계는 렌더 뒤 실제 노드 위치를 재서 잡는다. 여백이 소요시간에 따라
+   * 매번 달라지므로 미리 계산할 수 없다.
+   *
+   * plan[i] 는 i 번째 .stop 에 대응한다. 만날 역은 null (폭 0).
+   */
+  function paintRail(mapEl, plan) {
+    var fill = mapEl.querySelector('.railfill');
+    if (!fill) return false;
+    var rows = [].slice.call(mapEl.querySelectorAll('.stop'));
+    var h = mapEl.offsetHeight;
+    if (!h || rows.length !== plan.length) return false;
+
+    var centers = rows.map(function (row) {
+      var n = row.querySelector('.node');
+      return row.offsetTop + n.offsetTop + n.offsetHeight / 2;
+    });
+    if (centers[centers.length - 1] <= 0) return false;   // 화면에 안 붙어 있으면 잴 수 없다
+
+    var hub = -1;
+    plan.forEach(function (p, i) { if (!p) hub = i; });
+    function edge(i) {                                    // i 와 i+1 사이 경계
+      if (i === hub || i + 1 === hub) return centers[hub];
+      return (centers[i] + centers[i + 1]) / 2;
+    }
+
+    var segs = [];                                        // [{from,to,color}] px 기준
+    plan.forEach(function (p, i) {
+      if (!p) return;
+      var a = i === 0 ? 0 : edge(i - 1);
+      var b = i === plan.length - 1 ? h : edge(i);
+      if (b <= a) return;
+      /* 다리(leg)를 정차역 수에 비례해 나눈다. 위쪽 사람은 아래로 내려오고
+         아래쪽 사람은 위로 올라오므로, 아래쪽은 순서를 뒤집어 깔아야
+         "출발지 쪽이 첫 호선" 이 된다. */
+      var legs = p.legs.length ? p.legs : [{ color: null, stops: 1 }];
+      if (p.toward === 'up') legs = legs.slice().reverse();
+      var total = legs.reduce(function (n, l) { return n + Math.max(1, l.stops || 1); }, 0);
+      var at = a;
+      legs.forEach(function (l, k) {
+        var w = (b - a) * (Math.max(1, l.stops || 1) / total);
+        var end = k === legs.length - 1 ? b : at + w;
+        segs.push({ from: at, to: end, color: safeColor(l.color) || '#00A84D' });
+        at = end;
+      });
+    });
+    if (!segs.length) return false;
+
+    var parts = segs.map(function (g) {
+      return g.color + ' ' + (g.from / h * 100).toFixed(2) + '% ' + (g.to / h * 100).toFixed(2) + '%';
+    });
+    fill.style.background = 'linear-gradient(' + parts.join(',') + ')';
+    return true;
+  }
 
   function renderSpot(spot) {
     var d = state.result;
@@ -465,19 +548,55 @@
       return Math.round(Math.max(MIN_GAP, d));
     }
 
+    /* 만날 역 노드는 그 역이 지나는 호선 색을 다 두른다 */
+    var hubColors = spot.station.lines.map(lineColor);
+    var hubRing = ringStyle(hubColors);
+
+    /* 사람 노드는 그가 처음 타는 호선 색. 바로 옆 레일 구간과 같은 색이 된다. */
+    function boardColor(g) {
+      return (g.legs.length ? safeColor(g.legs[0].color) : null) || hubColors.filter(Boolean)[0] || null;
+    }
+
     var html = '<div class="rail"></div><div class="railfill"></div>';
+    var plan = [];
     top.forEach(function (g, i) {
       var inner = top[i + 1] ? top[i + 1].min : 0;
-      html += stopRow(g, { marginBottom: gapFor(g.min, inner) });
+      html += stopRow(g, { marginBottom: gapFor(g.min, inner) }, ringStyle([boardColor(g)]));
+      plan.push({ legs: g.legs, toward: 'down' });
     });
     html += '<div class="stop hit"><div class="who">' + esc(spot.station.name) + '</div>' +
-      '<div class="node"></div><div class="mins">여기서 만나기</div></div>';
+      '<div class="node"' + (hubRing ? ' style="' + hubRing + '"' : '') + '></div>' +
+      '<div class="mins">여기서 만나기</div></div>';
+    plan.push(null);
     bottom.forEach(function (g, i) {
       var inner = i === 0 ? 0 : bottom[i - 1].min;
-      html += stopRow(g, { marginTop: gapFor(g.min, inner) });
+      html += stopRow(g, { marginTop: gapFor(g.min, inner) }, ringStyle([boardColor(g)]));
+      plan.push({ legs: g.legs, toward: 'up' });
     });
     $('rmap').innerHTML = html;
     $('rmap').classList.add('on');
+
+    /* 레일 색칠은 실제 노드 위치를 재야 해서 렌더 뒤에 한다.
+       결과 화면이 막 켜진 직후엔 아직 레이아웃 전일 수 있어 한 프레임 뒤 한 번 더 본다. */
+    if (!paintRail($('rmap'), plan)) {
+      requestAnimationFrame(function () { paintRail($('rmap'), plan); });
+    }
+
+    /* 세로축이 소요시간이라는 것과, 어떤 색이 무슨 호선인지 밝힌다 */
+    $('raxis').innerHTML = '세로 간격은 <b>소요시간</b>이에요 · 지도 위 거리·방향과는 무관합니다';
+    $('raxis').hidden = false;
+
+    var seenLines = [];
+    groups.forEach(function (g) {
+      g.legs.forEach(function (l) { if (seenLines.indexOf(l.line) < 0) seenLines.push(l.line); });
+    });
+    spot.station.lines.forEach(function (l) { if (seenLines.indexOf(l) < 0) seenLines.push(l); });
+    var chips = seenLines.map(function (l) {
+      var c = lineColor(l);
+      return c ? '<i style="--c:' + c + '">' + esc(lineName(l)) + '</i>' : '';
+    }).filter(Boolean);
+    $('rlegend').innerHTML = chips.join('');
+    $('rlegend').hidden = !chips.length;
 
     var far = groups[0];
     var saved = d.worstIfSomeonesHomeMin - spot.maxMin;
@@ -495,6 +614,37 @@
       '<br><span style="color:#7C857A">' + esc(spot.station.name) + ' · ' +
       spot.station.lines.map(function (l) { return (state.lines[l] || {}).name || l; }).join(', ') +
       (surcharge.length ? ' · ' + esc(surcharge.join('/')) + ' 별도운임 포함' : '') + '</span>';
+
+    /* 왜 하필 이 역인지 — 규칙을 그대로 문장으로 옮긴다 (항목 3).
+       두 단계다: ① 후보 전체에서 "가장 먼 사람의 시간" 의 최솟값을 기준선으로 잡고,
+       ② 그 기준선 ±톨러런스 안에 든 후보 중 모두의 시간 합이 가장 짧은 곳을 고른다.
+       (graph.mjs: band 를 sumSec 으로 정렬한다)
+
+       ①의 기준선을 낸 역과 최종 선택이 다를 수 있다는 걸 숨기면 안 된다 —
+       후보 목록에 "가장 먼 사람" 이 더 짧은 역이 버젓이 보이는데 여기서
+       "가장 짧은 곳을 골랐다" 고 하면 그 자리에서 들통나고, 납득은 더 떨어진다. */
+    var pool = sel.candidateCount || sel.shortlist || 0;
+    var tol = sel.toleranceMin || 4;
+    var band = sel.bandSize || 1;
+    var floor = Number.isFinite(sel.minMaxSec) ? Math.round(sel.minMaxSec / 60) : null;
+    var why = [];
+    if (spot === d.best) {
+      why.push('환승 되는 역 <b>' + pool + '곳</b>을 다 따져보니, ' +
+        '<b>가장 먼 사람</b>의 시간은 아무리 줄여도 ' +
+        (floor === null ? '이 정도' : '<b>' + floor + '분</b>') + '이 최선이었어요.');
+      why.push(band > 1
+        ? '거기서 <b>±' + tol + '분</b> 안에 든 후보 <b>' + band + '곳</b> 중, ' +
+          '<b>모두의 시간을 합쳐 가장 짧은</b> 곳이 여기예요 ' +
+          '(가장 먼 사람 <b>' + spot.maxMin + '분</b> · 평균 <b>' + spot.avgMin + '분</b>).'
+        : '±' + tol + '분 안에 견줄 만한 다른 후보는 없어서 여기로 정했어요.');
+    } else {
+      why.push('추천은 <b>' + esc(d.best.station.name) + '</b>이고, 지금은 직접 고른 후보를 보고 있어요.');
+      why.push('가장 먼 사람 기준으로 ' +
+        '<b>' + (spot.maxMin - d.best.maxMin > 0 ? '+' : '') + (spot.maxMin - d.best.maxMin) + '분</b> 차이예요.');
+    }
+    why.push('<span style="color:#7C857A">소요시간에는 <b>환승 대기·환승 도보 시간</b>이 모두 들어 있어요.</span>');
+    $('rwhy').innerHTML = '<h4>왜 이 역인가요?</h4>' + why.join(' ');
+    $('rwhy').hidden = false;
 
     var q = encodeURIComponent(spot.station.name);
     $('food').href = 'https://map.kakao.com/?q=' + q + '+맛집';
@@ -560,7 +710,7 @@
     fbThanks('고마워요! 더 나은 추천에 쓸게요');
   });
 
-  function stopRow(g, style) {
+  function stopRow(g, style, nodeStyle) {
     var names = g.legs.map(function (l) { return l.lineName; });
     var uniq = names.filter(function (v, i) { return names.indexOf(v) === i; }).join(' → ');
     var css = [];
@@ -570,11 +720,15 @@
        기준은 상단 문구(실시간 대중교통 기준)가 이미 밝히고 있고,
        한 줄로 줄이면 행 높이가 줄어 다이어그램도 짧아진다. */
     var via = g.timeSource === 'odsay' ? '' : (uniq ? ' · ' + esc(uniq) : '');
-    var parts = [g.min + '분' + via + (g.transfers ? ' · 환승' + g.transfers : '')];
+    /* 환승을 0회일 때도 적는다. "환승 시간은 따진 거냐" 는 질문이 반복됐는데,
+       아무 표기가 없으니 안 따진 것처럼 보인 탓이었다. */
+    var hop = g.min === 0 ? '' : ' · ' + (g.transfers ? '환승 ' + g.transfers + '회' : '직통');
+    var parts = [g.min + '분' + via + hop];
     if (g.fare) parts.push(won(g.fare));
     return '<div class="stop"' + (css.length ? ' style="' + css.join(';') + '"' : '') + '>' +
       '<div class="who">' + esc(g.names.join('·')) +
-      '<small>' + esc(g.origin) + '</small></div><div class="node"></div>' +
+      '<small>' + esc(g.origin) + '</small></div>' +
+      '<div class="node"' + (nodeStyle ? ' style="' + nodeStyle + '"' : '') + '></div>' +
       '<div class="mins">' + parts.join(' · ') + '</div></div>';
   }
 

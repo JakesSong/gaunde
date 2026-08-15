@@ -75,8 +75,13 @@ describe('SQL 방언이 어댑터를 넘나들지 않는다', () => {
     );
     const a = methods('SqliteStore');
     const b = methods('PostgresStore');
-    const onlyA = [...a].filter((m) => !b.has(m) && m !== 'migrateParticipantIdentity' && m !== 'migrateFeedback');
-    const onlyB = [...b].filter((m) => !a.has(m) && m !== 'migrate' && m !== 'create');
+    /* migrate* 는 방언마다 모양이 다른 게 정상이다 —
+       SQLite 는 PRAGMA 로 컬럼 유무를 보고 따로 실행하고,
+       Postgres 는 ADD COLUMN IF NOT EXISTS 로 migrate() 안에서 끝낸다.
+       여기서 보려는 건 "저장소 기능" 이 한쪽에만 생기는 경우다. */
+    const isMigration = (m) => /^migrate/.test(m) || m === 'create';
+    const onlyA = [...a].filter((m) => !b.has(m) && !isMigration(m));
+    const onlyB = [...b].filter((m) => !a.has(m) && !isMigration(m));
     assert.deepEqual(onlyA, [], `SQLite 에만 있는 메서드: ${onlyA.join(', ')}`);
     assert.deepEqual(onlyB, [], `Postgres 에만 있는 메서드: ${onlyB.join(', ')}`);
   });

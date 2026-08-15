@@ -74,6 +74,7 @@ class SqliteStore {
     `);
     this.migrateParticipantIdentity();
     this.migrateFeedback();
+    this.migrateRouteTransfers();
   }
 
   /* 참여자 식별을 이름 → client_id 로 옮긴다. (아래 PostgresStore 에 같은 설명이 있다) */
@@ -134,21 +135,30 @@ class SqliteStore {
     ).run(meetingId, hash, json, routing ?? null);
   }
 
+  /* 환승 횟수는 나중에 추가했다. 화면에 "환승 N회" 로 나가는 값이라
+     그래프 짐작이 아니라 실제 경로 값을 써야 해서 캐시에도 같이 담는다. */
+  migrateRouteTransfers() {
+    const cols = this.db.prepare('PRAGMA table_info(route_cache)').all();
+    if (!cols.some((c) => c.name === 'transfers')) {
+      this.db.exec('ALTER TABLE route_cache ADD COLUMN transfers INTEGER');
+    }
+  }
+
   async getRouteCache(fromId, toId, ttlDays) {
     return this.db.prepare(
-      `SELECT minutes, fare FROM route_cache
+      `SELECT minutes, fare, transfers FROM route_cache
        WHERE from_id = ? AND to_id = ?
          AND julianday('now') - julianday(updated_at) < ?`,
     ).get(fromId, toId, ttlDays) ?? null;
   }
 
-  async putRouteCache(fromId, toId, minutes, fare) {
+  async putRouteCache(fromId, toId, minutes, fare, transfers) {
     this.db.prepare(
-      `INSERT INTO route_cache (from_id, to_id, minutes, fare) VALUES (?, ?, ?, ?)
+      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(from_id, to_id) DO UPDATE SET
-         minutes = excluded.minutes, fare = excluded.fare,
+         minutes = excluded.minutes, fare = excluded.fare, transfers = excluded.transfers,
          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-    ).run(fromId, toId, minutes, fare ?? null);
+    ).run(fromId, toId, minutes, fare ?? null, Number.isFinite(transfers) ? transfers : null);
   }
 
   async getRouteCacheCount() {
@@ -340,6 +350,7 @@ class PostgresStore {
      * 모임을 가로질러 같은 기기를 추적할 수 없다. */
     await this.pool.query(`
       ALTER TABLE events ADD COLUMN IF NOT EXISTS client_key text;
+      ALTER TABLE route_cache ADD COLUMN IF NOT EXISTS transfers integer;
       CREATE UNIQUE INDEX IF NOT EXISTS events_feedback_once
         ON events(meeting_id, client_key) WHERE event = 'result_feedback';
     `);
@@ -387,19 +398,20 @@ class PostgresStore {
 
   async getRouteCache(fromId, toId, ttlDays) {
     const { rows } = await this.pool.query(
-      `SELECT minutes, fare FROM route_cache
+      `SELECT minutes, fare, transfers FROM route_cache
        WHERE from_id = $1 AND to_id = $2 AND updated_at > now() - ($3 || ' days')::interval`,
       [fromId, toId, String(ttlDays)],
     );
     return rows[0] ?? null;
   }
 
-  async putRouteCache(fromId, toId, minutes, fare) {
+  async putRouteCache(fromId, toId, minutes, fare, transfers) {
     await this.pool.query(
-      `INSERT INTO route_cache (from_id, to_id, minutes, fare) VALUES ($1, $2, $3, $4)
+      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers) VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (from_id, to_id)
-       DO UPDATE SET minutes = EXCLUDED.minutes, fare = EXCLUDED.fare, updated_at = now()`,
-      [fromId, toId, minutes, fare ?? null],
+       DO UPDATE SET minutes = EXCLUDED.minutes, fare = EXCLUDED.fare,
+                     transfers = EXCLUDED.transfers, updated_at = now()`,
+      [fromId, toId, minutes, fare ?? null, Number.isFinite(transfers) ? transfers : null],
     );
   }
 

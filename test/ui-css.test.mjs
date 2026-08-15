@@ -154,3 +154,40 @@ describe('CSS 가시성 불변식', () => {
     assert.match(mq[1], /\.stop\s*\{[^}]*opacity:\s*1/, 'reduced-motion 에서 .stop 이 보이지 않는다');
   });
 });
+
+describe('다이어그램 읽기 보조', () => {
+  test('노드는 애니메이션 없이도 색이 보이는 구조다', () => {
+    /* 링을 border-color 대신 background 로 그린다 —
+       환승역은 호선이 여러 개라 conic-gradient 가 필요하고,
+       border-color 는 한 색밖에 못 받는다.
+       가운데 흰 원은 ::after 로 뚫으므로 애니메이션과 무관하다. */
+    const rule = body.match(/(^|\})\s*\.node\s*\{([^}]*)\}/);
+    assert.ok(rule, '.node 규칙을 찾지 못했다');
+    assert.match(rule[2], /background:/, '.node 에 background 링이 없다');
+    assert.ok(!/border:\s*\dpx solid/.test(rule[2]),
+      '.node 가 아직 border 로 링을 그린다 — 여러 호선 색을 못 준다');
+    assert.match(body, /\.node::after\s*\{[^}]*background:#fff/, '가운데 흰 원(::after)이 없다');
+  });
+
+  test('시간축·범례·근거 블록이 기본 숨김으로 마크업돼 있다', () => {
+    for (const id of ['raxis', 'rlegend', 'rwhy']) {
+      const tag = html.match(new RegExp('id="' + id + '"[^>]*>'));
+      assert.ok(tag, `#${id} 마크업이 없다`);
+      assert.match(tag[0], /hidden/, `#${id} 가 기본 숨김이 아니다 — 계산 전에 빈 상자가 보인다`);
+    }
+  });
+
+  test('시간축·범례·근거는 공유 이미지(#shot) 안에 있다', () => {
+    // html2canvas 는 #shot 만 뜬다. 밖에 두면 공유 이미지에서 설명이 빠진다.
+    const shot = html.match(/id="shot"[\s\S]*?<\/div>\s*<!-- 위치 A/);
+    assert.ok(shot, '#shot 영역을 찾지 못했다');
+    for (const id of ['raxis', 'rlegend', 'rwhy']) {
+      assert.ok(shot[0].includes('id="' + id + '"'), `#${id} 가 #shot 밖에 있다`);
+    }
+  });
+
+  test('범례 점 색은 인라인 --c 토큰으로 받는다', () => {
+    // 색이 데이터(graph.json)에서 오므로 CSS 에 고정할 수 없다
+    assert.match(body, /\.legend i::before\s*\{[^}]*background:var\(--c\)/);
+  });
+});

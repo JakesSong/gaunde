@@ -166,16 +166,16 @@ export class OdsayRouter extends GraphRouter {
     if (cached) {
       this.stats.cacheHits++;
       this.liveOk = true;
-      return { minutes: cached.minutes, fare: cached.fare };
+      return { minutes: cached.minutes, fare: cached.fare, transfers: cached.transfers ?? null };
     }
     const fresh = await this.fetchPair(fromId, toId);
     if (!fresh) return null;
     try {
-      await this.store.putRouteCache(fromId, toId, fresh.minutes, fresh.fare);
+      await this.store.putRouteCache(fromId, toId, fresh.minutes, fresh.fare, fresh.transfers);
     } catch (e) {
       console.error('[odsay] 캐시 저장 실패:', e.message);
     }
-    return { minutes: fresh.minutes, fare: fresh.fare };
+    return { minutes: fresh.minutes, fare: fresh.fare, transfers: fresh.transfers ?? null };
   }
 
   /**
@@ -284,7 +284,7 @@ export class OdsayRouter extends GraphRouter {
       const cached = await this.store.getRouteCache(p.from, p.to, ODSAY.cacheTtlDays);
       if (cached) {
         this.stats.cacheHits++; this.liveOk = true;
-        table.set(key, { minutes: cached.minutes, fare: cached.fare });
+        table.set(key, { minutes: cached.minutes, fare: cached.fare, transfers: cached.transfers ?? null });
         return;
       }
       if (budget <= 0) return;                    // 예산 초과분은 그래프 값으로 둔다
@@ -292,7 +292,7 @@ export class OdsayRouter extends GraphRouter {
       const fresh = await this.fetchPair(p.from, p.to);
       if (!fresh) return;
       table.set(key, fresh);
-      try { await this.store.putRouteCache(p.from, p.to, fresh.minutes, fresh.fare); } catch { /* 캐시는 실패해도 그만 */ }
+      try { await this.store.putRouteCache(p.from, p.to, fresh.minutes, fresh.fare, fresh.transfers); } catch { /* 캐시는 실패해도 그만 */ }
     });
 
     /* 하나도 못 받았으면 그래프 결과 그대로.
@@ -307,7 +307,7 @@ export class OdsayRouter extends GraphRouter {
     const rescored = spots.map((spot) => {
       const routes = spot.routes.map((r) => {
         if (r.originId === spot.station.id) {
-          return { ...r, sec: 0, fare: 0, timeSource: 'same-station' };
+          return { ...r, sec: 0, fare: 0, transfersOverride: 0, timeSource: 'same-station' };
         }
         const hit = table.get(`${r.originId}|${spot.station.id}`);
         if (!hit) return { ...r, timeSource: 'graph' };
@@ -315,6 +315,8 @@ export class OdsayRouter extends GraphRouter {
           ...r,
           sec: Math.round(hit.minutes * 60),
           fare: Number.isFinite(hit.fare) && hit.fare > 0 ? hit.fare : r.fare,
+          // 그래프가 짐작한 환승 횟수 대신 실제 경로의 값 (없으면 표시하지 않는다)
+          transfersOverride: Number.isFinite(hit.transfers) ? hit.transfers : null,
           timeSource: 'odsay',
         };
       });
@@ -410,11 +412,15 @@ export function parseOdsay(body) {
   if (!best) return { ok: false, reason: 'no usable path' };
 
   const fare = best.info.payment;
+  /* 환승 횟수 = 탑승 구간 수 - 1. 화면에 "환승 N회" 로 나가는 값이라
+     그래프가 짐작한 값 대신 실제 경로의 값을 써야 한다. */
+  const legs = (Number(best.info.busTransitCount) || 0) + (Number(best.info.subwayTransitCount) || 0);
   return {
     ok: true,
     value: {
       minutes: best.info.totalTime,
       fare: typeof fare === 'number' && Number.isFinite(fare) && fare >= 0 ? fare : null,
+      transfers: legs > 0 ? legs - 1 : null,
       pathType: best.pathType ?? best.info.pathType ?? null,
     },
   };

@@ -76,12 +76,31 @@ function clean(str, maxLen) {
  * IP·User-Agent·쿠키·기기 식별자는 남기지 않는다.
  * 이벤트 이름 목록은 집계 쪽과 어긋나면 안 되므로 db.mjs 에서 가져온다. */
 
-/** 기록 실패가 사용자 요청을 망치지 않게 삼킨다. 측정은 기능보다 뒤다. */
+/**
+ * 기록이 조용히 실패한 흔적.
+ *
+ * 측정 쓰기는 사용자 요청을 망치지 않으려고 예외를 삼킨다. 그런데 삼키기만 하면
+ * 안 쌓이는 걸 알아챌 방법이 로그뿐이고, Render 로그는 재시작하면 날아간다.
+ * (실제로 피드백 버튼을 넣은 날 저녁 서버가 부팅에 실패하는 동안 표가 유실됐는데,
+ *  집계가 1건인 걸 사람이 눈으로 보고서야 알았다.)
+ * 그래서 실패를 세어 /api/health 와 /api/stats 에 같이 내보낸다 — 0 이 아니면 문제다.
+ */
+const writeFailures = { events: 0, feedback: 0, lastError: null, lastAt: null };
+
+function noteWriteFailure(kind, event, e) {
+  writeFailures[kind]++;
+  writeFailures.lastError = `${event}: ${e.message}`;
+  writeFailures.lastAt = new Date().toISOString();
+  // 스택까지 남긴다. 방언 오류나 인덱스 누락은 메시지 한 줄로는 짚기 어렵다.
+  console.error(`[track] 저장 실패 (${kind}/${event}) — 누적 ${writeFailures[kind]}건:`, e.stack || e.message);
+}
+
+/** 기록 실패가 사용자 요청을 망치지 않게 삼킨다. 측정은 기능보다 뒤다 — 다만 조용히는 아니다. */
 async function track(event, meeting, meta) {
   try {
     await store.logEvent(event, meeting?.id ?? null, meeting?.token ?? null, meta ?? null);
   } catch (e) {
-    console.error('[track]', event, e.message);
+    noteWriteFailure('events', event, e);
   }
 }
 
@@ -94,6 +113,9 @@ async function track(event, meeting, meta) {
  * 이름만 바뀌어도 캐시는 무효가 돼야 한다. 순서와 무관하게 같은 값이 나오도록 정렬한다.
  * 노선도를 다시 빌드하면 역 id 가 밀릴 수 있어 그래프 생성시각도 함께 섞는다. */
 const RESULT_CACHE_TTL_DAYS = 7;
+/* 응답 모양이 바뀌면 옛 스냅샷은 새 화면과 맞지 않는다(후보 개수·환승 필드 등).
+   모양을 바꿀 때마다 올려서 캐시를 통째로 무효화한다. */
+const RESULT_SHAPE_REV = 2;
 const graphFingerprint = graph.meta.generatedAt || '';
 const resultCacheStats = { hits: 0, misses: 0 };
 
@@ -102,7 +124,7 @@ function participantsHash(participants) {
     .map((p) => `${p.id}|${p.name}|${p.station_id}`)
     .sort();
   return crypto.createHash('sha256')
-    .update(`${graphFingerprint}\n${parts.join('\n')}`)
+    .update(`v${RESULT_SHAPE_REV}\n${graphFingerprint}\n${parts.join('\n')}`)
     .digest('hex')
     .slice(0, 32);
 }
@@ -125,13 +147,15 @@ function resolveStation(input) {
 /* ------------------------------------------------------------------ 라우트 */
 
 /** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
-const REV = 'pg-dialect-fix-11';
+const REV = 'diagram-lines-13';
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, rev: REV, db: dbKind, stations: graph.stations.length,
   routing: router.name, hubs: graph.hubIds.length, toleranceMin: TOLERANCE_MIN,
   // ODsay 를 쓸 때만 붙는다. 키는 절대 싣지 않는다.
   resultCache: { ...resultCacheStats, ttlDays: RESULT_CACHE_TTL_DAYS },
+  // 0 이 아니면 집계가 유실되고 있다는 뜻이다. 재발을 사람 눈이 아니라 여기서 잡는다.
+  writeFailures: { ...writeFailures },
   ...(router.health ? { odsay: router.health } : {}),
 }));
 
@@ -292,7 +316,9 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     return res.status(500).json({ error: '등록된 역 중 현재 노선도에 없는 역이 있습니다.' });
   }
 
-  const result = await router.findMeetingPoint(originIds, { topN: 6 });
+  /* 후보를 6개까지 보여줬더니 "너무 많다" 는 피드백이 있었다.
+     best + 대안 2개 = 목록 3개면 비교하기에 충분하다. */
+  const result = await router.findMeetingPoint(originIds, { topN: 3 });
   if (!result) return res.status(500).json({ error: '중간지점을 계산하지 못했습니다.' });
 
   const shapeSpot = (spot) => ({
@@ -312,7 +338,8 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
       fare: r.fare,
       surcharges: r.surcharges,
       timeSource: r.timeSource ?? 'graph',
-      transfers: r.path?.transfers ?? 0,
+      // ODsay 로 계산된 경로면 실제 환승 횟수, 아니면 그래프가 찾은 경로의 환승 횟수
+      transfers: Number.isFinite(r.transfersOverride) ? r.transfersOverride : (r.path?.transfers ?? 0),
       estimated: !!r.path?.legs.some((l) => l.hasEstimate),
       legs: (r.path?.legs ?? []).map((l) => ({
         line: l.line, lineName: l.lineName, color: l.color,
@@ -340,6 +367,10 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
       routing: router.name,
       // ODsay 가 요금을 준 경우엔 근사치가 아니다
       fareApprox: (result.selection.fareSource ?? 'estimate') !== 'odsay' && FARE.approx,
+      /* "환승 시간은 따진 건가?" 라는 질문이 반복돼서 응답에 명시한다.
+         자체 그래프는 환승마다 도보 150초 + 배차의 절반을 더하고,
+         ODsay 경로는 실제 환승 대기가 포함된 시간이라 어느 쪽이든 참이다. */
+      includesTransferTime: true,
     },
     /** 가장 불리한 사람이 "누군가의 집 앞"으로 갈 때의 최대 소요시간 — 절감 효과 문구용 */
     worstIfSomeonesHomeMin: Math.round(result.worstPairwiseSec / 60),
@@ -402,7 +433,7 @@ async function recordFeedback(meeting, body) {
   try {
     await store.upsertFeedback(meeting.id, meeting.token, clientKey, { value, reason, station });
   } catch (e) {
-    console.error('[track] result_feedback', e.message);
+    noteWriteFailure('feedback', 'result_feedback', e);
   }
 }
 
@@ -417,7 +448,10 @@ app.get('/api/stats', asyncRoute(async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const { range, error } = parseRange({ from: req.query.from, to: req.query.to });
   if (error) return res.status(400).json({ error });
-  res.json(await store.getStats(range));
+  /* 집계를 읽는 자리에서 "이 숫자를 믿어도 되는지" 도 같이 보여준다.
+     프로세스가 살아 있는 동안의 실패 수라 재시작하면 0 으로 돌아간다 —
+     그래도 0 이 아닌 걸 보면 지금 유실 중이라는 건 확실히 안다. */
+  res.json({ ...await store.getStats(range), writeFailures: { ...writeFailures } });
 }));
 
 /* ------------------------------------------------------------------ 응답 정형화 */

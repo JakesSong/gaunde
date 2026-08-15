@@ -29,7 +29,7 @@ function memStore() {
   return {
     rows: m,
     async getRouteCache(a, b) { return m.get(`${a}|${b}`) ?? null; },
-    async putRouteCache(a, b, minutes, fare) { m.set(`${a}|${b}`, { minutes, fare }); },
+    async putRouteCache(a, b, minutes, fare, transfers) { m.set(`${a}|${b}`, { minutes, fare, transfers: transfers ?? null }); },
     async getRouteCacheCount() { return m.size; },
   };
 }
@@ -259,12 +259,30 @@ describe('캐시', () => {
 
     const first = await r.lookupPair(a, b);
     const second = await r.lookupPair(a, b);
-    // 캐시는 시간·요금만 담으므로 신선/캐시 응답의 모양이 같아야 한다
-    assert.deepEqual(first, { minutes: 28, fare: 1550 });
+    // 캐시가 담는 것과 신선 응답의 모양이 같아야 한다 (시간·요금·환승)
+    assert.deepEqual(first, { minutes: 28, fare: 1550, transfers: null });
     assert.deepEqual(second, first, '캐시 히트와 신선 응답의 모양이 다르다');
     assert.equal(calls.length, 1, 'API 를 두 번 불렀다');
     assert.equal(r.stats.cacheHits, 1);
     assert.equal(store.rows.size, 1);
+  });
+
+  test('환승 횟수도 캐시를 타고 그대로 돌아온다', async () => {
+    /* 화면에 "환승 N회" 를 적으려면 ODsay 가 실제로 찾은 경로의 환승 수여야 한다.
+       그래프가 따로 찾은 경로의 환승 수를 적으면 표시와 시간이 어긋난다.
+       환승 수는 탄 교통수단 수 - 1 이다. */
+    mockFetch(() => jsonRes({
+      result: { path: [{ pathType: 3, info: { totalTime: 40, payment: 1650, subwayTransitCount: 2, busTransitCount: 1 } }] },
+    }));
+    const store = memStore();
+    const r = mk(store);
+    const a = sid('서울역'), b = sid('노원');
+
+    const fresh = await r.lookupPair(a, b);
+    assert.equal(fresh.transfers, 2, '3개 수단 = 환승 2회');
+    const cached = await r.lookupPair(a, b);
+    assert.deepEqual(cached, fresh, '캐시에서 환승 수가 빠졌다');
+    assert.equal(calls.length, 1);
   });
 
   test('실패한 쌍은 캐시에 남기지 않는다', async () => {

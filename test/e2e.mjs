@@ -211,8 +211,74 @@ check('세로 간격이 소요시간에 비례',
   check('아래쪽은 가까운 사람 → 먼 사람 순', below.every((v, i) => i === 0 || below[i - 1] <= v), below.join(' ≤ '));
 }
 
+/* ================================================================= */
+log('\n■ 다이어그램 읽는 법 — 시간축 · 호선색 · 환승 · 근거');
+{
+  const doc = lastWin.document;
+
+  // 5. 세로축이 소요시간임을 밝힌다 (지도로 오해하지 않게)
+  const axis = doc.getElementById('raxis');
+  check('시간축 설명 노출', axis && !axis.hidden, axis && axis.textContent);
+  check('세로 = 소요시간, 지도 아님', /소요시간/.test(axis.textContent) && /지도/.test(axis.textContent));
+
+  // 6. 노드 색이 실제 호선 색 (jsdom 은 레이아웃이 없어 레일 그라데이션은 못 잰다 → 인라인 색으로 본다)
+  const nodes = [...doc.querySelectorAll('#rmap .stop:not(.hit) .node')];
+  const painted = nodes.filter((n) => /background/.test(n.getAttribute('style') || ''));
+  check('참여자 노드에 호선색', painted.length === nodes.length, painted.length + '/' + nodes.length);
+  const hubNode = doc.querySelector('#rmap .stop.hit .node');
+  const hubStyle = hubNode.getAttribute('style') || '';
+  check('만날 역 노드에도 호선색', /background/.test(hubStyle), hubStyle);
+  check('환승역이면 여러 색을 두른다',
+    doc.querySelector('#rmap .stop.hit .who').textContent.length > 0 &&
+    (/conic-gradient/.test(hubStyle) || /background:#/.test(hubStyle.replace(/\s/g, ''))), hubStyle);
+  const legend = doc.getElementById('rlegend');
+  check('호선 색 범례 노출', legend && !legend.hidden && legend.querySelectorAll('i').length > 0,
+    legend && legend.textContent);
+  check('범례 색이 실제 hex', [...legend.querySelectorAll('i')]
+    .every((i) => /--c:\s*#[0-9a-fA-F]{3,8}/.test(i.getAttribute('style') || '')));
+
+  /* 2. 환승이 계산에 들어갔다는 것을 행마다 밝힌다.
+     단 만날 역에 이미 있는 사람(0분)은 타는 구간 자체가 없다 —
+     그 줄에 "직통" 을 적으면 오히려 거짓말이 되므로 빼고 본다. */
+  const minsTexts = [...doc.querySelectorAll('#rmap .stop:not(.hit) .mins')].map((m) => m.textContent);
+  const riding = minsTexts.filter((t) => !/^0분/.test(t.trim()));
+  check('이동하는 행마다 환승 횟수/직통 표기',
+    riding.length > 0 && riding.every((t) => /환승 \d+회|직통/.test(t)), riding[0]);
+  check('0분(이미 그 역) 줄엔 환승 표기 없음',
+    minsTexts.filter((t) => /^0분/.test(t.trim())).every((t) => !/환승|직통/.test(t)));
+  check('환승 있는 사람은 횟수로 표기', minsTexts.some((t) => /환승 \d+회/.test(t)),
+    minsTexts.find((t) => /환승/.test(t)));
+
+  // 3. 왜 이 역인지
+  const why = doc.getElementById('rwhy');
+  check('선정 근거 노출', why && !why.hidden, why && why.textContent.replace(/\s+/g, ' ').slice(0, 90));
+  const whyText = why.textContent.replace(/\s+/g, ' ');
+  check('근거에 최소최대 기준선', /가장 먼 사람.*아무리 줄여도 \d+분이 최선/.test(whyText));
+  check('근거에 허용 오차 밴드', /±\d+분/.test(whyText));
+  check('근거에 합계로 골랐다는 2단계', /모두의 시간을 합쳐 가장 짧은/.test(whyText));
+  check('근거에 환승시간 포함 문구', /환승 대기[·, ]?환승 도보 시간이 모두 들어/.test(whyText));
+
+  /* 실제 선택 규칙은 "밴드 안에서 합이 최소" 다. 추천역의 최댓값이 곧 최솟값이라고
+     쓰면 거짓이 된다 — 후보 목록에 최댓값이 더 작은 역이 보이는 경우가 실제로 있다.
+     (예: 추천 사당 50분인데 대안 노량진이 48분) 그 문장이 돌아오면 여기서 잡는다. */
+  check('추천역이 최댓값 최소라고 주장하지 않는다',
+    !/가장 먼 사람의 시간이 가장 짧은 곳/.test(whyText), whyText.slice(0, 80));
+  {
+    const res = await fetch(`${BASE}/api/meetings/${token}/result`).then((r) => r.json());
+    const floor = Math.round(res.selection.minMaxSec / 60);
+    check('근거의 기준선이 응답의 minMaxSec 과 일치',
+      new RegExp('줄여도 ' + floor + '분').test(whyText), `minMaxSec=${floor}분 / ${whyText.slice(0, 70)}`);
+    const lowerMaxAlt = res.alternatives.find((a) => a.maxMin < res.best.maxMin);
+    check('추천보다 최댓값이 작은 대안이 있어도 근거가 모순되지 않는다',
+      !lowerMaxAlt || /합쳐 가장 짧은/.test(whyText),
+      lowerMaxAlt ? `${lowerMaxAlt.station.name} ${lowerMaxAlt.maxMin}분 < 추천 ${res.best.maxMin}분` : '해당 없음');
+  }
+}
+
 const altBtns = [...lastWin.document.querySelectorAll('#altrows .altrow')];
 check('후보 목록이 버튼으로 렌더', altBtns.length >= 2, altBtns.length + '개');
+// 4. 후보가 많다는 피드백 → 추천 1 + 대안 2 = 3개로 줄였다
+check('후보를 3개만 보여준다', altBtns.length === 3, altBtns.length + '개');
 check('첫 후보가 선택 상태', altBtns[0].classList.contains('on'));
 const beforeHit = lastWin.document.querySelector('#rmap .stop.hit .who').textContent;
 altBtns[1].dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
@@ -371,6 +437,16 @@ log('\n■ 결과 피드백 (위치 A)');
     JSON.stringify(after.feedback.badReasons));
   check('만족도 필드 구성', typeof after.feedback.satisfactionPercent === 'number' || after.feedback.satisfactionPercent === null,
     JSON.stringify(after.feedback));
+
+  /* 쓰기 실패는 사용자 요청을 막지 않으려고 삼킨다. 그래서 삼킨 흔적이 밖에서 보여야
+     "안 쌓이고 있다" 를 사람이 집계를 세어보기 전에 알 수 있다. */
+  const wf = after.writeFailures;
+  check('/api/stats 에 쓰기실패 카운터 노출', wf && typeof wf.feedback === 'number' && typeof wf.events === 'number',
+    JSON.stringify(wf));
+  check('이번 흐름에서 쓰기 실패 0건', wf.events === 0 && wf.feedback === 0, JSON.stringify(wf));
+  const hw = await fetch(`${BASE}/api/health`).then((r) => r.json());
+  check('/api/health 에도 같은 카운터', hw.writeFailures && typeof hw.writeFailures.feedback === 'number',
+    JSON.stringify(hw.writeFailures));
 
   // 다시 열면 이미 남긴 상태로 (같은 기기 = localStorage 공유)
   const again = (await openPage('?m=' + token + '&r=1', { store: lastStore })).window;
