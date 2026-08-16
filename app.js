@@ -734,18 +734,19 @@
   }
 
   /* ---------------------------------------------------------- 시간 외 표식
-   * 상권 데이터로 후보를 정렬하는 건 다음 라운드다. 지금은 이미 가진 것
-   * (지나는 노선 수, 손으로 고른 번화가 목록)으로 칩 한두 개만 단다.
+   * 상권 데이터로 후보를 정렬하는 건 다음 라운드다. 지금은 손으로 고른
+   * 번화가 목록으로 칩 하나만 단다. 그래서 대개 아무것도 안 뜬다.
    *
    * 막차(대략) 블록은 뺐다 — 화면이 너무 빽빽하다는 피드백에서 가장 먼저 지목된 덩어리였고,
    * 애초에 계산이 아니라 노선 등급별 통상 범위라 정확도도 값어치도 낮았다.
-   * 서버는 여전히 best.lastTrain 을 내려주지만 화면에서는 쓰지 않는다. */
+   * 서버는 여전히 best.lastTrain 을 내려주지만 화면에서는 쓰지 않는다.
+   *
+   * 환승/단일 노선 태그도 뺐다 — 바로 위 색칩 범례가 이미 그 역을 지나는 노선을
+   * 하나하나 이름으로 보여주고 있어서, 그 개수를 다시 세어 주는 칩이었다. */
   function renderMarks(spot) {
     var el = $('rmarks');
     var t = spot.tags || {};
     var parts = [];
-    if (t.transferLines >= 2) parts.push('<span class="tag">환승 <b>' + t.transferLines + '개 노선</b></span>');
-    else if (t.transferLines === 1) parts.push('<span class="tag"><b>단일 노선</b> 역</span>');
     if (t.busyArea) parts.push('<span class="tag"><b>번화가</b></span>');
 
     el.innerHTML = parts.join('');
