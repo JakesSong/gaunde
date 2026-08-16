@@ -164,11 +164,12 @@ check('폴링으로 6명 반영', text(lastWin, 'cnt') === '6명 등록', text(l
 /* ================================================================= */
 log('\n■ 3단계 — 결과 화면');
 click(lastWin, 'toresult');
-const rendered = await waitFor(() => /\d+분/.test(text(lastWin, 'rtitle')));
-check('결과 렌더 완료', rendered, text(lastWin, 'rtitle'));
+/* 결과 화면에는 헤더가 없다 — 수치 타일(#rkeys)이 뜨는 것이 "렌더 끝" 의 신호다 */
+const rendered = await waitFor(() => /\d+분/.test(text(lastWin, 'rkeys')));
+check('결과 렌더 완료', rendered, text(lastWin, 'rkeys'));
 check('STEP 3 로 이동', visible(lastWin, 2), text(lastWin, 'eyebrow'));
-const title = text(lastWin, 'rtitle');
-check('제목에 최대 소요시간', /가장 먼 사람도 \d+분/.test(title), title);
+check('결과가 뜨면 상태 한 줄은 숨는다',
+  lastWin.document.getElementById('rstat').hidden === true, text(lastWin, 'rstat'));
 
 const hit = lastWin.document.querySelector('#rmap .stop.hit .who');
 check('중간지점 역 표시', !!hit && hit.textContent.length > 0, hit && hit.textContent);
@@ -189,10 +190,13 @@ check('데이터 커버리지 각주', /실측 \d+%/.test(footer), footer);
 
 /* ================================================================= */
 log('\n■ 결과 화면 개편 확인');
-check('문구가 "가장 먼 사람도 N분"', /가장 먼 사람도 \d+분/.test(title), title);
-/* 상단은 "문장 한 줄 + 큰 숫자" 로 나뉘었다. 설명문에는 인원·평균만 남고
-   핵심 수치(가장 먼 사람·1인 요금)는 별도 타일로 크게 나간다. */
-check('상단 설명이 압축됨 (인원·평균만)', /^\d+명 · 평균 \d+분$/.test(text(lastWin, 'rlede')), text(lastWin, 'rlede'));
+/* "정보가 너무 많다" 피드백으로 상단 헤더를 통째로 뺐다. 큰 제목과 설명문이
+   바로 아래 타일과 같은 숫자를 두 번 말하던 자리다 — 요약은 타일만 한다. */
+{
+  const shot = lastWin.document.getElementById('shot');
+  check('중복 헤더가 없다 (rtitle·rlede 삭제)',
+    !shot.querySelector('#rtitle') && !shot.querySelector('#rlede'));
+}
 {
   const keys = lastWin.document.getElementById('rkeys');
   const t = keys.textContent.replace(/\s+/g, ' ').trim();
@@ -312,9 +316,12 @@ log('\n■ 사용자 피드백 반영 — 라벨 · 배지 · 접힘 · 경로 �
   check('범례가 노선도보다 위에 그려진다',
     shotKids.indexOf('rlegend') >= 0 && shotKids.indexOf('rlegend') < shotKids.indexOf('rmap'),
     shotKids.join(' → '));
+  /* 색칩만 남기고 "동그라미 색 = …" 해설은 뺐다 (정보량 정리).
+     레일 색을 해독하려면 칩은 필요하므로 칩 자체는 그대로 있어야 한다. */
   const legendText = text(lastWin, 'rlegend');
-  check('노드 색이 "그 사람 출발역 호선" 임을 밝힌다',
-    /출발역에서 처음 타는 호선/.test(legendText), legendText.slice(0, 60));
+  check('범례는 색칩만 남았다 (긴 해설 없음)',
+    !/동그라미 색/.test(legendText) && doc.querySelectorAll('#rlegend i').length > 0,
+    legendText.slice(0, 60));
 
   /* 3. 왜 이 역인가요? — 기본 접힘, 눌러서 펼침 */
   const why = doc.getElementById('rwhy');
@@ -375,22 +382,20 @@ log('\n■ 사용자 피드백 반영 — 라벨 · 배지 · 접힘 · 경로 �
   check('다시 누르면 접힌다', row.querySelector('.legs').hidden === true &&
     row.getAttribute('aria-expanded') === 'false');
 
-  /* 13·14. 막차(대략) · 시간 외 표식 */
+  /* 14. 시간 외 표식 — 칩만 남는다. 막차(대략) 블록은 뺐다. */
   const marks = doc.getElementById('rmarks');
   check('표식 블록 노출', !marks.hidden, marks.textContent.replace(/\s+/g, ' ').trim().slice(0, 90));
   check('환승 노선 수 또는 번화가 표식', /환승 \d+개 노선|단일 노선|번화가/.test(marks.textContent));
-  check('막차는 "대략" 이라고 못 박는다',
-    !/막차/.test(marks.textContent) || (/막차/.test(marks.textContent) && /대략/.test(marks.textContent)),
-    (marks.textContent.match(/막차[^\n]{0,60}/) || [''])[0].replace(/\s+/g, ' '));
-  check('막차 값이 응답에서 온다 (프런트가 지어내지 않는다)',
-    (res.best.lastTrain.lines || []).every((x) => /^\d{2}:\d{2}~\d{2}:\d{2}$/.test(x.approx)),
-    JSON.stringify(res.best.lastTrain.lines));
+  check('막차 블록은 화면에 없다', !/막차/.test(marks.textContent),
+    (marks.textContent.match(/막차[^\n]{0,60}/) || ['(없음)'])[0].replace(/\s+/g, ' '));
+  /* 응답 스키마는 그대로 둔다 — 프런트가 안 쓸 뿐이다 */
+  check('서버는 여전히 lastTrain 을 내려준다 (스키마 유지)',
+    !!res.best.lastTrain, JSON.stringify(res.best.lastTrain || null).slice(0, 60));
 
-  /* 15. 방위 힌트 */
-  const compass = doc.getElementById('rcompass');
-  check('방위 힌트 한 줄', !compass.hidden, compass.textContent.replace(/\s+/g, ' ').trim());
-  check('힌트가 "그림은 지도가 아니다" 를 함께 말한다', /지도가 아닙니다/.test(compass.textContent));
-  check('방향은 좌표에서 낸다', res.best.routes.every((r) => typeof r.originLat === 'number'));
+  /* 15. 방위/한가운데 문장은 제거됐다 — "지도가 아님" 은 raxis 한 줄이 이미 말한다 */
+  check('방위 힌트 줄이 없다', !doc.getElementById('rcompass'));
+  check('지도 아님 안내는 시간축 한 줄이 맡는다',
+    /지도/.test(text(lastWin, 'raxis')), text(lastWin, 'raxis'));
 
   /* 11. 공유 링크 = 결과 직행 */
   check('결과 링크가 ?m=…&r=1', /\?m=[a-z0-9]{10}&r=1$/.test(text(lastWin, 'rlinktext')), text(lastWin, 'rlinktext'));
@@ -503,14 +508,17 @@ log('\n■ 로딩 문구 — 진입 경로에 따라 달라진다');
   const fresh = (await openPage('?m=' + token)).window;
   await sleep(400);
   fresh.document.getElementById('toresult').dispatchEvent(new fresh.MouseEvent('click', { bubbles: true }));
-  const firstText = text(fresh, 'rtitle');
+  const firstText = text(fresh, 'rstat');
   check('첫 계산은 "계산하는 중…"', /계산하는 중/.test(firstText), firstText);
-  await waitFor(() => /\d+분/.test(text(fresh, 'rtitle')));
+  check('로딩 중에는 상태 한 줄이 보인다', fresh.document.getElementById('rstat').hidden === false);
+  await waitFor(() => /\d+분/.test(text(fresh, 'rkeys')));
+  check('결과가 오면 상태 한 줄은 사라진다',
+    fresh.document.getElementById('rstat').hidden === true, text(fresh, 'rstat'));
 
   // 딥링크 재진입 (다른 기기여도 결과 링크면 이미 계산된 것)
   const deep = (await openPage('?m=' + token + '&r=1')).window;
-  const deepText = await waitFor(() => /불러오는 중/.test(text(deep, 'rtitle')) || /\d+분/.test(text(deep, 'rtitle')))
-    ? text(deep, 'rtitle') : text(deep, 'rtitle');
+  await waitFor(() => /불러오는 중/.test(text(deep, 'rstat')) || /\d+분/.test(text(deep, 'rkeys')));
+  const deepText = text(deep, 'rstat') || text(deep, 'rkeys');
   check('딥링크 재진입은 "결과 불러오는 중…"',
     /불러오는 중/.test(deepText) || /\d+분/.test(deepText), deepText);
 
@@ -519,12 +527,12 @@ log('\n■ 로딩 문구 — 진입 경로에 따라 달라진다');
   const again1 = (await openPage('?m=' + token, { store })).window;
   await sleep(400);
   again1.document.getElementById('toresult').dispatchEvent(new again1.MouseEvent('click', { bubbles: true }));
-  await waitFor(() => /\d+분/.test(text(again1, 'rtitle')));
+  await waitFor(() => /\d+분/.test(text(again1, 'rkeys')));
 
   const again2 = (await openPage('?m=' + token, { store })).window;
   await sleep(400);
   again2.document.getElementById('toresult').dispatchEvent(new again2.MouseEvent('click', { bubbles: true }));
-  const againText = text(again2, 'rtitle');
+  const againText = text(again2, 'rstat');
   check('같은 기기 재조회도 "불러오는 중…"', /불러오는 중/.test(againText), againText);
 }
 

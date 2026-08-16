@@ -206,7 +206,7 @@ describe('다이어그램 읽기 보조', () => {
   });
 
   test('시간축·범례·근거 블록이 기본 숨김으로 마크업돼 있다', () => {
-    for (const id of ['raxis', 'rlegend', 'rwhy', 'rkeys', 'rbasis', 'rcompass', 'rmarks']) {
+    for (const id of ['raxis', 'rlegend', 'rwhy', 'rkeys', 'rbasis', 'rmarks', 'rstat']) {
       const tag = html.match(new RegExp('id="' + id + '"[^>]*>'));
       assert.ok(tag, `#${id} 마크업이 없다`);
       assert.match(tag[0], /hidden/, `#${id} 가 기본 숨김이 아니다 — 계산 전에 빈 상자가 보인다`);
@@ -217,9 +217,29 @@ describe('다이어그램 읽기 보조', () => {
     // html2canvas 는 #shot 만 뜬다. 밖에 두면 공유 이미지에서 설명이 빠진다.
     const shot = html.match(/id="shot"[\s\S]*?<\/div>\s*<!-- 위치 A/);
     assert.ok(shot, '#shot 영역을 찾지 못했다');
-    for (const id of ['raxis', 'rlegend', 'rwhy', 'rkeys', 'rbasis', 'rcompass', 'rmarks']) {
+    for (const id of ['raxis', 'rlegend', 'rwhy', 'rkeys', 'rbasis', 'rmarks']) {
       assert.ok(shot[0].includes('id="' + id + '"'), `#${id} 가 #shot 밖에 있다`);
     }
+  });
+
+  test('결과 화면에 중복 헤더가 없다 — 요약은 수치 타일 두 칸이 한다', () => {
+    /* "정보가 너무 많다" 피드백. 큰 제목(가장 먼 사람도 N분)과 설명문(N명 · 평균 N분)이
+       바로 아래 .keys 타일과 같은 숫자를 두 번 말하고 있었다. 되돌아오지 않게 못 박는다. */
+    const shot = html.match(/id="shot"[\s\S]*?<\/div>\s*<!-- 위치 A/)[0];
+    assert.ok(!/<h2[^>]*id="rtitle"/.test(shot), '결과 헤더(h2#rtitle)가 다시 들어왔다');
+    assert.ok(!/id="rlede"/.test(shot), '결과 설명문(#rlede)이 다시 들어왔다');
+    const iStat = shot.indexOf('id="rstat"');
+    const iKeys = shot.indexOf('id="rkeys"');
+    assert.ok(iStat > 0, '상태 한 줄(#rstat)이 없다 — 계산 중·실패일 때 화면이 빈다');
+    assert.ok(iStat < iKeys, '#rstat 이 수치 타일보다 아래에 있다');
+    assert.match(body, /\.rstat\s*\{[^}]*font-size:/, '.rstat 스타일이 없다');
+  });
+
+  test('막차·방위 힌트 CSS 가 남아 있지 않다', () => {
+    // 마크업을 지우고 CSS 만 남기면 다음 사람이 되살릴 근거로 쓴다
+    assert.ok(!/\.compass\s*\{/.test(body), '.compass 규칙이 죽은 채 남아 있다');
+    assert.ok(!/\.marks \.last\s*\{/.test(body), '.marks .last(막차) 규칙이 죽은 채 남아 있다');
+    assert.ok(!/\.lgnote/.test(body), '.lgnote(범례 해설) 규칙이 죽은 채 남아 있다');
   });
 
   test('맛집·카페 버튼이 어디로 가는지 적혀 있다', () => {
