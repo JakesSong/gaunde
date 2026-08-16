@@ -323,10 +323,18 @@ log('\n■ 사용자 피드백 반영 — 라벨 · 배지 · 접힘 · 경로 �
     !/동그라미 색/.test(legendText) && doc.querySelectorAll('#rlegend i').length > 0,
     legendText.slice(0, 60));
 
-  /* 3. 왜 이 역인가요? — 기본 접힘, 눌러서 펼침 */
+  /* 3. 왜 이 역인가요? — 기본 접힘, 눌러서 펼침.
+     예외가 하나 있다: 추천보다 "가장 먼 사람" 이 짧은 후보가 목록에 보이는 판
+     (27분 vs 26분)에서는 접어두면 계산이 틀린 것처럼 보이므로 펼쳐서 먼저 답한다. */
   const why = doc.getElementById('rwhy');
+  const reversal = res.alternatives.some((a) => a.maxMin < res.best.maxMin);
   check('근거 블록이 details 다', why.tagName === 'DETAILS', why.tagName);
-  check('첫 화면에서는 접혀 있다', why.open === false, String(why.open));
+  check(reversal ? '최댓값 역전 판에서는 근거가 펼쳐진다' : '첫 화면에서는 접혀 있다',
+    why.open === reversal, `open=${why.open} / 역전=${reversal}`);
+  if (reversal) {
+    check('펼친 근거가 역전을 직접 설명한다', /합계가 밀렸기/.test(why.textContent),
+      why.textContent.replace(/\s+/g, ' ').slice(0, 120));
+  }
   check('접혀 있어도 근거 내용은 그대로 있다', /모두의 시간을 합쳐 가장 짧은/.test(why.textContent));
   why.querySelector('summary').dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
   // jsdom 은 summary 클릭으로 open 을 토글하지 않는 판이 있어 직접도 확인한다
@@ -560,6 +568,23 @@ log('\n■ 결과 피드백 (위치 A)');
   await sleep(400);
   check('이유 고르면 감사 인라인', /고마워요/.test(text(lastWin, 'fbq')), text(lastWin, 'fbq'));
   check('이유 칩도 사라진다', doc.getElementById('fbwhy').hidden === true);
+  check('불만족 감사는 사유를 받았다고 말한다', /추천 기준을 손볼게요/.test(text(lastWin, 'fbq')),
+    text(lastWin, 'fbq'));
+
+  /* 되돌리기 — 누른 뒤에도 다시 고를 수 있어야 한다 (예전엔 버튼이 사라져 취소 불가) */
+  check('감사 상태에도 되돌리기가 있다', doc.getElementById('fbredo').hidden === false);
+  doc.getElementById('fbredo').dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
+  await sleep(150);
+  check('되돌리면 투표 버튼이 돌아온다', doc.getElementById('fbvote').hidden === false, text(lastWin, 'fbq'));
+
+  /* 사유 없이 떠난 불만족은, 다시 들어와도 사유부터 묻는다 (그 기기에서 영영 못 받던 값) */
+  lastWin.localStorage.setItem('gaunde.fb.' + token, 'bad');
+  doc.querySelector('#altrows .altrow').dispatchEvent(new lastWin.MouseEvent('click', { bubbles: true }));
+  await sleep(200);
+  check('사유 없는 불만족은 다시 사유를 묻는다',
+    doc.getElementById('fbwhy').hidden === false && doc.getElementById('fbvote').hidden === true,
+    text(lastWin, 'fbq'));
+  lastWin.localStorage.removeItem('gaunde.fb.' + token);
 
   const after = await fetch(`${BASE}/api/stats`).then((r) => r.json());
   check('result_feedback 집계됨', after.feedback.sample === before.feedback.sample + 1,

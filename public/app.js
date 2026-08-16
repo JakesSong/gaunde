@@ -402,8 +402,9 @@
         var spots = [d.best].concat(d.alternatives);
         $('altrows').innerHTML = spots.map(function (a, i) {
           return '<button class="altrow' + (i === 0 ? ' on' : '') + '" type="button" data-i="' + i + '">' +
-            '<b>' + esc(a.station.name) + '</b>' +
-            '<span>가장 먼 사람 ' + a.maxMin + '분 · 평균 ' + a.avgMin + '분 · ' + won(a.fareAvg) + '</span>' +
+            '<span class="atop"><b>' + esc(a.station.name) + '</b>' +
+            '<em' + (i === 0 ? ' class="rec"' : '') + '>' + altWhy(a, d.best) + '</em></span>' +
+            '<span class="abot">가장 먼 사람 ' + a.maxMin + '분 · 평균 ' + a.avgMin + '분 · ' + won(a.fareAvg) + '</span>' +
             '</button>';
         }).join('');
         $('alts').hidden = spots.length < 2;
@@ -438,6 +439,22 @@
 
   function won(v) { return v ? v.toLocaleString('ko-KR') + '원' : '0원'; }
 
+  /* '다른 후보' 줄에 왜 이게 후보인지 한 줄. 새로 계산하지 않고 이미 받은 값의 차이만 적는다.
+     절대값(가장 먼 사람 26분 · 평균 …)은 아랫줄에 그대로 있으니, 윗줄은 추천과 뭐가
+     다른지만 말하면 된다 — 그게 없으면 세 줄이 그냥 비슷한 숫자 세 벌로 보인다. */
+  function diff(v, unit) {
+    if (v === 0) return '동일';
+    return (v > 0 ? '+' : '-') + Math.abs(v).toLocaleString('ko-KR') + unit;
+  }
+  function altWhy(a, best) {
+    if (a === best) return '추천';
+    var out = ['가장 먼 사람 ' + diff(a.maxMin - best.maxMin, '분')];
+    /* 두 번째 값은 실제로 갈리는 쪽을 고른다. 평균이 같으면 요금이 그 역의 유일한 차이다. */
+    if (a.avgMin !== best.avgMin) out.push('평균 ' + diff(a.avgMin - best.avgMin, '분'));
+    else if (a.fareAvg !== best.fareAvg) out.push('요금 ' + diff(a.fareAvg - best.fareAvg, '원'));
+    return out.join(' · ');
+  }
+
   /* ---------------------------------------------------------- 호선 색
    * graph.json 이 노선별 실제 색(#RRGGBB)을 들고 있다. 그대로 쓰되,
    * style 속성에 넣기 전에 모양을 확인한다 — 데이터가 곧 스타일이 되는 자리다. */
@@ -457,6 +474,10 @@
     });
     return 'background:conic-gradient(' + parts.join(',') + ')';
   }
+
+  /* 아무의 경로도 아닌 레일 구간(가장 먼 사람 바깥쪽, 그리고 이동이 없는 사람 자리)에
+     쓰는 중립색. 여기에 누군가의 호선색이 닿으면 "저 사람이 저 노선을 탄다" 는 거짓말이 된다. */
+  var RAIL_NEUTRAL = '#D8DCD6';
 
   /**
    * 레일을 실제 호선 색으로 칠한다.
@@ -483,22 +504,33 @@
 
     var hub = -1;
     plan.forEach(function (p, i) { if (!p) hub = i; });
-    function edge(i) {                                    // i 와 i+1 사이 경계
-      if (i === hub || i + 1 === hub) return centers[hub];
-      return (centers[i] + centers[i + 1]) / 2;
-    }
+    if (hub < 0) return false;
 
-    var segs = [];                                        // [{from,to,color}] px 기준
+    /* 각자의 색은 "자기 노드에서 만날 역 쪽" 으로만 칠한다.
+       예전에는 이웃 노드와의 중간점을 경계로 삼아서, 한 사람의 호선색이 자기 노드보다
+       바깥(만날 역 반대편)까지 새어 나갔다. 그러면 직통으로 오는 사람 옆에도 남의
+       호선색이 붙어 환승하는 것처럼 보인다 — 실제로 그렇게 읽혔다는 피드백이 왔다.
+         위쪽 사람 i : [자기 노드, 한 칸 안쪽 노드]   (아래로 내려온다)
+         아래쪽 사람 i: [한 칸 안쪽 노드, 자기 노드]  (위로 올라온다)
+       i±1 이 만날 역이면 그게 곧 안쪽 끝이다. 양쪽 바깥 끝은 아무도 지나지 않으므로
+       중립색으로 남긴다 — 그래야 레일이 위아래로 대칭이 되기도 한다. */
+    var segs = [];                                        // [{from,to,color}] px 기준, 위→아래 순
+    if (centers[0] > 0) segs.push({ from: 0, to: centers[0], color: RAIL_NEUTRAL });
     plan.forEach(function (p, i) {
       if (!p) return;
-      var a = i === 0 ? 0 : edge(i - 1);
-      var b = i === plan.length - 1 ? h : edge(i);
-      if (b <= a) return;
-      /* 다리(leg)를 정차역 수에 비례해 나눈다. 위쪽 사람은 아래로 내려오고
-         아래쪽 사람은 위로 올라오므로, 아래쪽은 순서를 뒤집어 깔아야
-         "출발지 쪽이 첫 호선" 이 된다. */
-      var legs = p.legs.length ? p.legs : [{ color: null, stops: 1 }];
-      if (p.toward === 'up') legs = legs.slice().reverse();
+      var a = i < hub ? centers[i] : centers[i - 1];
+      var b = i < hub ? centers[i + 1] : centers[i];
+      if (!(b > a)) return;
+      /* 이동이 없는 사람(이미 그 역에 있음)은 탄 노선이 없다. 초록으로 칠하면
+         타지도 않은 노선을 탄 것처럼 보이므로 중립색으로 둔다. */
+      if (!p.legs.length) {
+        segs.push({ from: a, to: b, color: RAIL_NEUTRAL });
+        return;
+      }
+      /* 환승 색분할은 자기 arm 안에서만 한다 — "어디서 갈아타는지 보인다" 는 그대로다.
+         다리(leg)를 정차역 수에 비례해 나눈다. 아래쪽 사람은 위로 올라오므로
+         순서를 뒤집어 깔아야 "출발지 쪽이 첫 호선" 이 된다. */
+      var legs = p.toward === 'up' ? p.legs.slice().reverse() : p.legs;
       var total = legs.reduce(function (n, l) { return n + Math.max(1, l.stops || 1); }, 0);
       var at = a;
       legs.forEach(function (l, k) {
@@ -508,6 +540,8 @@
         at = end;
       });
     });
+    var tail = centers[centers.length - 1];
+    if (h > tail) segs.push({ from: tail, to: h, color: RAIL_NEUTRAL });
     if (!segs.length) return false;
 
     var parts = segs.map(function (g) {
@@ -522,12 +556,13 @@
     state.shownSpot = spot;
     var sel = d.selection || {};
 
-    /* 상단은 수치 타일 두 칸이 전부다. 예전에는 그 위에 큰 제목("가장 먼 사람도 N분")과
-       설명문("N명 · 평균 N분")이 더 있었는데, 타일이 같은 숫자를 다시 말하는 중복이라
-       "정보가 너무 많다" 는 피드백의 첫 항목이었다. 헤더를 없애고 타일만 남긴다. */
+    /* 상단은 수치 타일이 전부다 — 큰 제목과 설명문은 타일과 같은 숫자를 두 번 말하는
+       중복이라 뺐다. 대신 평균은 타일로 되돌린다: "가장 먼 사람" 한 값만 있으면
+       한 사람 때문에 고른 것처럼 보이는데, 실제 2단계 선택은 전체 합으로 정해진다. */
     $('rstat').hidden = true;
     $('rkeys').innerHTML =
       '<div class="hi"><b>' + spot.maxMin + '분</b><span>가장 먼 사람</span></div>' +
+      '<div><b>' + spot.avgMin + '분</b><span>평균</span></div>' +
       '<div><b>' + won(spot.fareAvg) + '</b><span>1인 요금' +
         (sel.fareApprox ? ' (근사치)' : '') + '</span></div>';
     $('rkeys').hidden = false;
@@ -601,11 +636,17 @@
       return (g.legs.length ? safeColor(g.legs[0].color) : null) || hubColors.filter(Boolean)[0] || null;
     }
 
+    /* 가장 오래 걸리는 사람. 이 값이 곧 추천의 기준(maxMin)인데, 27분 vs 26분처럼
+       1분 차이로 갈리면 다이어그램 양 끝 중 누가 최장인지 눈으로 못 고른다.
+       동률이면 둘 다 표시한다 — 한쪽만 고르면 그게 더 거짓말이다. */
+    var farMin = groups.length ? groups[0].min : 0;
+    function isFar(g) { return farMin > 0 && g.min === farMin; }
+
     var html = '<div class="rail"></div><div class="railfill"></div>';
     var plan = [];
     top.forEach(function (g, i) {
       var inner = top[i + 1] ? top[i + 1].min : 0;
-      html += stopRow(g, { marginBottom: gapFor(g.min, inner) }, ringStyle([boardColor(g)]), groups.indexOf(g));
+      html += stopRow(g, { marginBottom: gapFor(g.min, inner) }, ringStyle([boardColor(g)]), groups.indexOf(g), isFar(g));
       plan.push({ legs: g.legs, toward: 'down' });
     });
     html += '<div class="stop hit"><div class="stopmain">' +
@@ -615,7 +656,7 @@
     plan.push(null);
     bottom.forEach(function (g, i) {
       var inner = i === 0 ? 0 : bottom[i - 1].min;
-      html += stopRow(g, { marginTop: gapFor(g.min, inner) }, ringStyle([boardColor(g)]), groups.indexOf(g));
+      html += stopRow(g, { marginTop: gapFor(g.min, inner) }, ringStyle([boardColor(g)]), groups.indexOf(g), isFar(g));
       plan.push({ legs: g.legs, toward: 'up' });
     });
     $('rmap').innerHTML = html;
@@ -629,8 +670,12 @@
       requestAnimationFrame(function () { paintRail($('rmap'), plan); });
     }
 
-    /* 세로축이 소요시간이라는 것과, 어떤 색이 무슨 호선인지 밝힌다 */
-    $('raxis').innerHTML = '세로 간격은 <b>소요시간</b>이에요 · 지도 위 거리·방향과는 무관합니다';
+    /* 세로축이 소요시간이라는 것을 밝힌다.
+       참여자가 위아래로 갈리면 "아래쪽이 더 가깝다" 는 지도식 오해가 생기는데,
+       실제로는 양쪽 다 바깥으로 갈수록 오래 걸린다. 그 대칭을 말로도 못 박는다
+       (그림 쪽에서는 만날 역 줄의 옅은 띠가 축의 중심을 잡아준다). */
+    $('raxis').innerHTML = '세로 간격은 <b>소요시간</b>이에요 · 가운데가 만날 역이고 ' +
+      '<b>위아래 모두 바깥쪽일수록 오래 걸려요</b> · 지도 위 거리·방향과는 무관합니다';
     $('raxis').hidden = false;
 
     var seenLines = [];
@@ -672,35 +717,56 @@
        ①의 기준선을 낸 역과 최종 선택이 다를 수 있다는 걸 숨기면 안 된다 —
        후보 목록에 "가장 먼 사람" 이 더 짧은 역이 버젓이 보이는데 여기서
        "가장 짧은 곳을 골랐다" 고 하면 그 자리에서 들통나고, 납득은 더 떨어진다. */
+    /* 여기 나오는 "후보" 는 세 종류인데 이름이 다 똑같아서, 첫 줄의 큰 수(수백 곳)와
+       아래 목록의 세 줄이 서로 안 맞는 것처럼 읽혔다. 부르는 이름을 갈라 놓는다.
+         평가한 후보  = 계산을 돌린 역 전체            (pool)
+         비슷한 후보  = 기준선 ±톨러런스 안에 든 역     (band)
+         보여주는 후보 = 아래 '다른 후보' 목록의 줄 수  (shown)
+       셋은 원래 다른 수다. 다르다는 것까지 적어야 불일치로 안 읽힌다. */
     var pool = sel.candidateCount || sel.shortlist || 0;
+    var shown = 1 + (d.alternatives || []).length;
+    var srcs = sel.candidateSources || {};
+    var addedOrigins = srcs.originsNotHub || 0;
     var tol = sel.toleranceMin || 4;
     var band = sel.bandSize || 1;
     var floor = Number.isFinite(sel.minMaxSec) ? Math.round(sel.minMaxSec / 60) : null;
+    /* 추천보다 "가장 먼 사람" 이 짧은 후보가 목록에 버젓이 보이는 경우(27분 vs 26분).
+       규칙상 맞는 결과지만, 근거를 접어둔 채로는 계산이 틀린 것처럼 보인다. */
+    var beaten = (d.alternatives || []).filter(function (a) { return a.maxMin < d.best.maxMin; });
+
     var why = [];
     if (spot === d.best) {
-      why.push('환승 되는 역 <b>' + pool + '곳</b>을 다 따져보니, ' +
-        '<b>가장 먼 사람</b>의 시간은 아무리 줄여도 ' +
+      /* 후보에 출발역도 들어간다는 걸 밝힌다. 환승역만 본다고 오해하면
+         "우리 동네가 답인데 왜 안 나오냐" 로 이어진다. */
+      why.push('<b>평가한 후보는 ' + pool + '곳</b>이에요 — 환승 되는 역 전체' +
+        (addedOrigins > 0
+          ? '에, 환승역이 아닌 <b>참여자 출발역 ' + addedOrigins + '곳</b>까지 더한 수예요 ' +
+            '(이미 다 같은 동네면 그 동네가 답이 되도록요).'
+          : '이에요.'));
+      why.push('그 ' + pool + '곳을 다 따져보니 <b>가장 먼 사람</b>의 시간은 아무리 줄여도 ' +
         (floor === null ? '이 정도' : '<b>' + floor + '분</b>') + '이 최선이었어요.');
       why.push(band > 1
         ? '거기서 <b>±' + tol + '분</b> 안에 든 후보 <b>' + band + '곳</b> 중, ' +
           '<b>모두의 시간을 합쳐 가장 짧은</b> 곳이 여기예요 ' +
           '(가장 먼 사람 <b>' + spot.maxMin + '분</b> · 평균 <b>' + spot.avgMin + '분</b>).'
         : '±' + tol + '분 안에 견줄 만한 다른 후보는 없어서 여기로 정했어요.');
+      if (beaten.length) {
+        why.push('아래 목록에는 <b>' + esc(beaten[0].station.name) + '</b>처럼 가장 먼 사람이 ' +
+          '<b>' + beaten[0].maxMin + '분</b>으로 더 짧은 곳도 있어요. ' +
+          '그런데도 여기를 고른 건, 그 역은 나머지 사람들이 더 걸려서 <b>합계가 밀렸기</b> 때문이에요.');
+      }
+      why.push('<span style="color:#7C857A">아래 <b>다른 후보</b>에는 이 중 성적이 좋은 순으로 ' +
+        '<b>' + shown + '곳</b>만 추려 보여줘요 — ' + pool + '곳을 다 늘어놓지는 않아요.</span>');
     } else {
       why.push('추천은 <b>' + esc(d.best.station.name) + '</b>이고, 지금은 직접 고른 후보를 보고 있어요.');
       why.push('가장 먼 사람 기준으로 ' +
         '<b>' + (spot.maxMin - d.best.maxMin > 0 ? '+' : '') + (spot.maxMin - d.best.maxMin) + '분</b> 차이예요.');
     }
-    /* 후보에 출발역도 들어간다는 걸 근거에 적는다. 환승역만 본다고 오해하면
-       "우리 동네가 답인데 왜 안 나오냐" 로 이어진다. */
-    var addedOrigins = (sel.candidateSources || {}).origins || 0;
-    if (spot === d.best && addedOrigins > 0) {
-      why.push('후보에는 <b>참여자 출발역 ' + addedOrigins + '곳</b>도 함께 넣고 따졌어요 — ' +
-        '이미 다 같은 동네면 그 동네가 답이 되도록요.');
-    }
     why.push('<span style="color:#7C857A">소요시간에는 <b>환승 대기·환승 도보 시간</b>이 모두 들어 있어요.</span>');
     $('rwhybody').innerHTML = why.join(' ');
     $('rwhy').hidden = false;
+    /* 평소엔 접어둔다(정보량). 다만 최댓값 역전이 눈에 보이는 판에서는 펼쳐서 먼저 답한다. */
+    $('rwhy').open = spot === d.best && beaten.length > 0;
 
     renderMarks(spot);
 
@@ -756,20 +822,48 @@
   /* ------------------------------------------------------------ 결과 피드백 */
   function fbKey() { return 'gaunde.fb.' + state.token; }
 
+  /**
+   * 저장값은 'good' | 'bad' | 'bad:사유' 세 꼴이다. 'bad' 인데 사유가 없다는 건
+   * 사유를 묻는 화면에서 그냥 떠났다는 뜻이므로, 다시 들어오면 사유부터 묻는다.
+   * 예전에는 저장값이 있기만 하면 곧장 감사 문구로 넘어가서, 정작 가장 듣고 싶은
+   * "왜 별로였는지" 를 그 기기에서는 영영 못 받았다.
+   */
   function renderFeedback() {
-    var saved = localStorage.getItem(fbKey());
+    var saved = localStorage.getItem(fbKey()) || '';
+    var v = saved.split(':');
     $('fb').hidden = false;
-    if (saved) return fbThanks();
+    if (v[0] === 'bad' && !v[1]) return fbAskWhy();
+    if (saved) return fbThanks(v[0]);
     $('fbq').textContent = '이 추천, 도움이 됐어요?';
     $('fbvote').hidden = false;
     $('fbwhy').hidden = true;
+    $('fbredo').hidden = true;
   }
 
-  function fbThanks(msg) {
+  function fbAskWhy() {
+    $('fbq').textContent = '어떤 점이 아쉬웠나요?';
+    $('fbvote').hidden = true;
+    $('fbwhy').hidden = false;
+    $('fbredo').hidden = false;
+  }
+
+  /** kind: 'good' | 'bad' — 무엇에 대한 감사인지에 따라 문구가 다르다. */
+  function fbThanks(kind) {
     $('fbvote').hidden = true;
     $('fbwhy').hidden = true;
-    $('fbq').innerHTML = '<span class="fbthanks">' + (msg || '고마워요! 의견이 반영돼요') + '</span>';
+    var line = kind === 'bad'
+      ? ['알려줘서 고마워요 🙏', '이 의견으로 추천 기준을 손볼게요']
+      : ['고마워요 🙌', '여러분 의견으로 역 추천을 다듬고 있어요'];
+    $('fbq').innerHTML = '<span class="fbthanks"><b>' + line[0] + '</b><i>' + line[1] + '</i></span>';
+    $('fbredo').hidden = false;
   }
+
+  /* 한 번 누르면 끝이라 오누름을 되돌릴 수 없었다. 저장은 그대로 두되(중복 집계 방지),
+     다시 고를 길은 남긴다. */
+  $('fbredo').addEventListener('click', function () {
+    try { localStorage.removeItem(fbKey()); } catch (e) { /* 사파리 프라이빗 등 */ }
+    renderFeedback();
+  });
 
   /** 서버로 보낸다. 실패해도 UX 를 막지 않는다 (기존 track 과 같은 방식). */
   function sendFeedback(value, reason) {
@@ -793,24 +887,23 @@
     if (!b) return;
     if (b.dataset.v === 'good') {
       sendFeedback('good');
-      fbThanks();
+      fbThanks('good');
       return;
     }
-    /* 불만족은 이유를 한 번 더 묻는다. 이유 없이 닫아도 'bad' 는 이미 집계된다. */
+    /* 불만족은 이유를 한 번 더 묻는다. 이유 없이 닫아도 'bad' 는 이미 집계되고,
+       다음에 다시 들어오면 renderFeedback 이 사유부터 다시 묻는다. */
     sendFeedback('bad');
-    $('fbvote').hidden = true;
-    $('fbq').textContent = '어떤 점이 아쉬웠나요?';
-    $('fbwhy').hidden = false;
+    fbAskWhy();
   });
 
   $('fbwhy').addEventListener('click', function (e) {
     var b = e.target.closest('.fbchip');
     if (!b) return;
     sendFeedback('bad', b.dataset.r);
-    fbThanks('고마워요! 더 나은 추천에 쓸게요');
+    fbThanks('bad');
   });
 
-  function stopRow(g, style, nodeStyle, gi) {
+  function stopRow(g, style, nodeStyle, gi, far) {
     var names = g.legs.map(function (l) { return l.lineName; });
     var uniq = names.filter(function (v, i) { return names.indexOf(v) === i; }).join(' → ');
     var css = [];
@@ -829,12 +922,25 @@
        미리 그려두면 접혀 있어도 이름·역 이름이 DOM 에 남아 다이어그램 한 줄이
        실제보다 길어 보이고, 안 볼 사람 몫까지 매번 만들게 된다. */
     var can = g.legs.length > 0;
-    return '<div class="stop' + (can ? ' can' : '') + '" data-g="' + gi + '"' +
+    /* 접힌 상태에서도 무엇이 열리는지 한 조각 미리 보여준다. "경로 보기" 만 있으면
+       무슨 화면이 뜨는지 몰라 안 누른다. 환승이 있으면 첫 환승역이 가장 궁금한 값이고,
+       직통이면 이미 옆 칸에 "직통" 이 있으니 대신 정거장 수를 준다.
+       .more 는 펼칠 때 "접기" 로 바뀌므로, 미리보기는 지울 수 있게 따로 둔다. */
+    var peek = '';
+    if (can) {
+      peek = g.transfers && g.legs.length > 1
+        ? ' · ' + esc(g.legs[0].to) + ' 환승'
+        : ' · ' + (g.legs[0].stops || 1) + '개 역';
+    }
+    return '<div class="stop' + (can ? ' can' : '') + (far ? ' far' : '') + '" data-g="' + gi + '"' +
       (can ? ' tabindex="0" role="button" aria-expanded="false"' : '') +
       (css.length ? ' style="' + css.join(';') + '"' : '') + '>' +
       '<div class="stopmain">' +
       '<div class="who">' + esc(g.names.join('·')) +
-      '<small>' + esc(g.origin) + (can ? ' <span class="more">경로 보기</span>' : '') + '</small></div>' +
+      (far ? '<span class="mx">최장</span>' : '') +
+      '<small>' + esc(g.origin) +
+      (can ? ' <span class="more">경로 보기</span><span class="peek">' + peek + '</span>' : '') +
+      '</small></div>' +
       '<div class="node"' + (nodeStyle ? ' style="' + nodeStyle + '"' : '') + '></div>' +
       '<div class="mins">' + parts.join(' · ') + '</div></div></div>';
   }

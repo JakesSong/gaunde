@@ -166,11 +166,26 @@
      375px 에서 이 줄이 두 줄이 되는 건 어쩔 수 없지만, 끊기는 자리는 · 앞뒤여야 한다. */
   .stop .mins{width:calc(50% - 16px);font-size:12.5px;color:var(--sub);letter-spacing:-.02em;
     word-break:keep-all}
-  .stop.hit .stopmain{padding:16px 0}
+  /* 참여자가 만날 역 위아래로 갈려 그려지면 "아래쪽이 더 가깝다" 는 지도식 오해가 생긴다.
+     세로축은 시간이고 양쪽 다 바깥으로 갈수록 오래 걸린다. 만날 역 줄에 좌우로 고르게
+     빠지는 띠를 깔아 여기가 축의 한가운데라는 걸 먼저 보이게 한다 —
+     좌우 대칭이라 어느 방향으로도 "가깝다/멀다" 로는 읽히지 않는다. */
+  .stop.hit .stopmain{padding:16px 10px;border-radius:14px;
+    background:linear-gradient(90deg,rgba(239,124,28,0),rgba(239,124,28,.10) 24%,
+      rgba(239,124,28,.10) 76%,rgba(239,124,28,0))}
   .stop.hit .node{width:26px;height:26px;box-shadow:0 0 0 6px rgba(239,124,28,.14)}
   .stop.hit .node::after{inset:5px}
   .stop.hit .who{font-size:19px;font-weight:800;letter-spacing:-.045em}
   .stop.hit .mins{font-size:12px;font-weight:700;color:var(--pin);letter-spacing:.04em}
+
+  /* 가장 오래 걸리는 사람. 추천의 기준이 되는 값인데 27분 vs 26분처럼 1분 차이로
+     갈리면 다이어그램 양 끝 중 누가 최장인지 눈으로는 못 고른다. */
+  .stop.far .who{font-weight:800}
+  .stop.far .who small{font-weight:400}
+  .stop.far .mins{color:#4A524A;font-weight:700}
+  .who .mx{display:inline-block;margin-left:5px;padding:1px 5px;border-radius:999px;
+    background:rgba(239,124,28,.15);color:var(--pin);font-size:9.5px;font-weight:700;
+    letter-spacing:.02em;vertical-align:2px}
 
   /* ---- 각자 경로 펼치기 (참여자 줄을 누르면) ---- */
   .stop.can .stopmain{cursor:pointer;border-radius:10px}
@@ -178,6 +193,11 @@
   .stop.can:focus-visible{outline:3px solid var(--pin);outline-offset:2px;border-radius:10px}
   .who .more{font-size:10.5px;color:var(--sub);letter-spacing:-.01em}
   .stop.open .who .more{color:var(--line);font-weight:700}
+  /* 접힌 상태에서 무엇이 열리는지 미리 보여주는 조각(첫 환승역 / 정거장 수).
+     펼치면 그 내용이 아래에 그대로 나오므로 미리보기는 치운다.
+     역 이름이 들어가는 자리라 .empty 의 흐린 회색(#B9C1B5)은 쓰지 않는다 — 읽으라고 둔 값이다. */
+  .who .peek{font-size:10.5px;color:var(--sub);letter-spacing:-.01em}
+  .stop.open .who .peek{display:none}
   .legs{margin:0 0 8px;padding:9px 11px;border:1px solid var(--rule);border-radius:10px;
     background:#FBFCFA;font-size:11.5px;line-height:1.55;color:#4A524A;letter-spacing:-.02em}
   .legs .leg{display:flex;align-items:flex-start;gap:7px;padding:2px 0}
@@ -192,11 +212,15 @@
   .rstat{margin:0 0 12px;font-size:14px;font-weight:700;letter-spacing:-.03em;color:#4A524A}
 
   /* ---- 핵심 수치 · 계산 기준 배지 ---- */
-  .keys{display:flex;gap:8px;margin:0 0 10px}
-  .keys div{flex:1;min-width:0;background:var(--paper);border-radius:12px;padding:10px;text-align:center}
-  .keys b{display:block;font-size:20px;font-weight:800;letter-spacing:-.045em;line-height:1.15;
+  /* 칸이 둘에서 셋(가장 먼 사람 · 평균 · 1인 요금)으로 늘었다. 375px 에서도 세 칸이
+     한 줄에 들어가야 해서 여백과 글자를 조금씩 줄인다 — 다만 이 숫자가 화면에서
+     제일 커야 한다는 조건(.lede 보다 충분히 큼)은 그대로 지킨다. */
+  .keys{display:flex;gap:6px;margin:0 0 10px}
+  .keys div{flex:1;min-width:0;background:var(--paper);border-radius:12px;padding:9px 6px;text-align:center}
+  .keys b{display:block;font-size:18px;font-weight:800;letter-spacing:-.045em;line-height:1.15;
     word-break:keep-all}
-  .keys span{display:block;font-size:10.5px;color:var(--sub);margin-top:3px;letter-spacing:-.01em}
+  .keys span{display:block;font-size:10px;color:var(--sub);margin-top:3px;letter-spacing:-.01em;
+    word-break:keep-all}
   .keys .hi b{color:var(--pin)}
 
   /* 시간이 어디서 나온 값인지. 요금만 근사치라고 적혀 있고 시간은 확정처럼 보인다는
@@ -249,12 +273,19 @@
 
   .alts{margin-top:14px;border-top:1px solid var(--rule);padding-top:12px}
   .alts .rhead{margin-bottom:6px}
-  .altrow{display:flex;align-items:baseline;gap:8px;padding:9px 10px;font-size:13px;letter-spacing:-.02em;
+  /* 두 줄이다. 윗줄은 "추천과 뭐가 다른지"(가장 먼 사람 -1분 · 요금 -200원),
+     아랫줄은 그 역의 절대값. 한 줄에 절대값만 세 벌 늘어놓으면 세 후보가
+     그냥 비슷한 숫자 뭉치로 보여서 왜 후보인지가 안 읽혔다. */
+  .altrow{display:flex;flex-direction:column;gap:2px;padding:9px 10px;font-size:13px;letter-spacing:-.02em;
     width:100%;text-align:left;font-family:inherit;background:none;border:1.5px solid transparent;
     border-radius:10px;cursor:pointer;color:var(--ink)}
   .altrow:hover{border-color:var(--rule);background:#FBFCFA}
   .altrow.on{border-color:var(--line);background:rgba(0,168,77,.06)}
-  .altrow span{color:var(--sub);font-size:12px;margin-left:auto}
+  .altrow .atop{display:flex;align-items:baseline;gap:8px}
+  .altrow .atop em{margin-left:auto;font-style:normal;font-size:11px;font-weight:700;
+    color:#4A524A;letter-spacing:-.01em;white-space:nowrap}
+  .altrow .atop em.rec{color:var(--line)}
+  .altrow .abot{color:var(--sub);font-size:11.5px;letter-spacing:-.01em}
   .altrow.on b::after{content:'  보는 중';font-size:10.5px;color:var(--line);font-weight:700;letter-spacing:.04em}
 
   /* ---- 결과 피드백 (안 A: 점선 박스) ---- */
@@ -285,9 +316,22 @@
   }
   .fbchip:hover{border-color:var(--fb-line)}
   .fbchip:focus-visible{outline:3px solid var(--pin);outline-offset:2px}
-  /* 감사 문구만 남을 때도 박스가 허전하지 않게 세로 여백을 조금 준다 */
-  .fbthanks{display:block;padding:2px 0;font-size:13px;letter-spacing:-.02em;
-    color:var(--fb-ok);font-weight:700}
+  /* 감사 문구는 가운데로 두 줄. 투표 버튼·사유 칩이 사라진 자리만큼 박스가 쪼그라들면
+     방금 누른 자리가 통째로 접힌 것처럼 보이므로, .fb 에 최소 높이를 줘 크기를 붙든다.
+     (min-height 는 border-box 기준이라 위아래 12px 패딩이 이미 들어 있다) */
+  .fb{min-height:96px}
+  .fbthanks{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;
+    text-align:center;letter-spacing:-.02em}
+  .fbthanks b{font-size:14px;font-weight:700;color:var(--fb-ok)}
+  .fbthanks i{font-style:normal;font-size:11.5px;line-height:1.5;color:var(--fb-ink)}
+
+  /* 되돌리기. 한 번 누르면 버튼이 사라져 오누름을 취소할 수 없다는 지적이 있었다.
+     주 동작이 아니므로 밑줄 링크처럼만 둔다. */
+  .fbredo{display:block;margin:8px auto 0;font:inherit;font-size:11px;letter-spacing:-.01em;
+    padding:2px 4px;border:0;background:none;color:var(--fb-ink);opacity:.75;
+    text-decoration:underline;cursor:pointer}
+  .fbredo:hover{opacity:1}
+  .fbredo:focus-visible{outline:3px solid var(--pin);outline-offset:2px;border-radius:6px}
 
   /* 고대비 모드에서는 배경색이 무시되므로 점선 테두리만이라도 남긴다 */
   @media (forced-colors: active){
@@ -350,7 +394,7 @@
 <div class="stage">
   <div class="brandbar">
     <div class="mark">가운<i>데</i></div>
-    <div class="tagline">다 같이 애매하게 먼 곳 찾기</div>
+    <div class="tagline">다 같이 덜 억울한 중간 지점</div>
   </div>
 
   <div class="phone">
@@ -462,6 +506,8 @@
           <button class="fbchip" type="button" data-r="odd_station">역이 이상해요</button>
           <button class="fbchip" type="button" data-r="other">기타</button>
         </div>
+        <!-- 오누름을 되돌릴 길. 한 번 누르면 버튼이 사라져 취소할 수 없다는 지적이 있었다. -->
+        <button class="fbredo" type="button" id="fbredo" hidden>다시 고르기</button>
       </div>
 
       <div class="acts" id="acts" hidden>
