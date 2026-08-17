@@ -446,6 +446,14 @@ export class OdsayRouter extends GraphRouter {
     }
     const rescoredById = new Map(rescored.map((s) => [s.station.id, s]));
 
+    /* "가장 먼 사람의 시간" 최선값은 후보 풀 전체의 성질이라 기준과 무관하게 하나다.
+       ODsay 로 다시 잰 후보 전체(= 모든 기준의 shortlist 합집합)에서 한 번만 구한다.
+       기준별 목록 안에서 다시 세면, 그 목록에 최선값을 낸 역이 없을 때 그 기준만
+       더 큰 값을 최선값이라고 말하게 된다 (요금 32분 / 환승 30분으로 갈렸던 원인). */
+    const poolMinMaxSec = rescored.length
+      ? Math.min(...rescored.map((s) => s.maxSec))
+      : base.selection?.minMaxSec;
+
     /* 그래프와 같은 규칙으로, 기준마다 따로 줄을 세운다.
      *
      * 기준별 후보 풀은 그래프가 후보 전체(130여 곳)에서 이미 골라 온 것이다. 여기서는
@@ -463,7 +471,9 @@ export class OdsayRouter extends GraphRouter {
       /* 자기 기준의 후보 안에서만 줄을 세운다.
          다른 기준이 데려온 역까지 한 풀에 섞으면, 기준을 하나 더 켰다는 이유만으로
          기본 기준(시간)의 답이 흔들린다. 기본 기준의 후보는 예전 shortlist 그대로다. */
-      const r = rankByMode(entries, mode, { toleranceSec, slackSec, topN, diversify, linesOf, dirOf });
+      const r = rankByMode(entries, mode, {
+        toleranceSec, slackSec, topN, diversify, linesOf, dirOf, minMaxSec: poolMinMaxSec,
+      });
       /* inBand 는 기준마다 다르다. 공유 객체를 고쳐 쓰면 다른 기준의 표시가 같이 바뀐다. */
       const list = r.list.map((s) => ({ ...s, inBand: s.maxSec <= r.cutoffSec }));
       return {

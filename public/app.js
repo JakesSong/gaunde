@@ -498,6 +498,16 @@
 
   function won(v) { return v ? v.toLocaleString('ko-KR') + '원' : '0원'; }
 
+  /* 긴 역 이름은 글자 크기를 한 단계씩 줄여 한 줄에 담는다.
+     만날 역 칸은 노드를 레일 한가운데 두려고 폭이 50% 로 고정돼 있어 늘릴 수 없다.
+     그래서 '동대문역사문화공원'(9자)이 '…공/원' 으로 갈려 깨졌다.
+     여기서는 등급만 정하고 실제 크기는 CSS(.who.n6 ~ .n11)가 들고 있다. */
+  function nameFit(name) {
+    var n = String(name || '').length;
+    if (n <= 5) return '';
+    return ' n' + Math.min(11, n);
+  }
+
   /* '다른 후보' 줄에 왜 이게 후보인지 한 줄. 새로 계산하지 않고 이미 받은 값의 차이만 적는다.
      절대값(가장 먼 사람 26분 · 평균 …)은 아랫줄에 그대로 있으니, 윗줄은 추천과 뭐가
      다른지만 말하면 된다 — 그게 없으면 세 줄이 그냥 비슷한 숫자 세 벌로 보인다. */
@@ -534,7 +544,7 @@
   /* 아랫줄의 절대값도 기준에 맞춰 앞자리를 바꾼다 (값 자체는 늘 같은 세 가지다) */
   function altFacts(a) {
     var time = '가장 먼 사람 ' + a.maxMin + '분 · 평균 ' + a.avgMin + '분';
-    if (state.mode === 'fare') return '1인 ' + won(a.fareAvg) + ' · ' + time;
+    if (state.mode === 'fare') return '1인 평균 ' + won(a.fareAvg) + ' · ' + time;
     if (state.mode === 'transfers' && hops(a) !== null) {
       return '환승 합 ' + hops(a) + '회 · ' + time;
     }
@@ -650,7 +660,9 @@
        무엇을 보고 고른 건지 확인할 길이 없다. */
     var third = state.mode === 'transfers' && hops(spot) !== null
       ? '<b>' + hops(spot) + '회</b><span>환승 (모두 합)</span>'
-      : '<b>' + won(spot.fareAvg) + '</b><span>1인 요금' + (sel.fareApprox ? ' (근사치)' : '') + '</span>';
+      /* '1인 요금' 이라고 적었더니 그 값을 내는 사람이 실제로 없다는 지적이 왔다.
+         이건 참여자별 요금의 평균이다 — 라벨에 '평균' 을 적어야 거짓말이 아니다. */
+      : '<b>' + won(spot.fareAvg) + '</b><span>1인 평균 요금' + (sel.fareApprox ? ' (근사치)' : '') + '</span>';
     $('rstat').hidden = true;
     $('rkeys').innerHTML =
       '<div class="hi"><b>' + spot.maxMin + '분</b><span>가장 먼 사람</span></div>' +
@@ -746,7 +758,7 @@
       plan.push({ legs: g.legs, toward: 'down' });
     });
     html += '<div class="stop hit"><div class="stopmain">' +
-      '<div class="who">' + esc(spot.station.name) + '</div>' +
+      '<div class="who' + nameFit(spot.station.name) + '">' + esc(spot.station.name) + '</div>' +
       '<div class="node"' + (hubRing ? ' style="' + hubRing + '"' : '') + '></div>' +
       '<div class="mins">여기서 만나기</div></div></div>';
     plan.push(null);
@@ -857,7 +869,7 @@
         (floor === null ? '' : '(<b>' + floor + '분</b>)') +
         ' <b>+' + slack + '분</b> 안에 드는 후보 <b>' + band + '곳</b> 안에서만 골라요.');
       why.push('그중 ' + (isFare
-        ? '<b>모두가 내는 요금 합이 가장 적은</b> 곳이 여기예요 (1인 <b>' + won(spot.fareAvg) + '</b>'
+        ? '<b>모두가 내는 요금 합이 가장 적은</b> 곳이 여기예요 (1인 평균 <b>' + won(spot.fareAvg) + '</b>'
         : '<b>환승 횟수 합이 가장 적은</b> 곳이 여기예요 (모두 합쳐 <b>' +
           (hops(spot) === null ? '?' : hops(spot)) + '회</b>' +
           (spot.transfersMax === undefined ? '' : ', 가장 많은 사람 <b>' + spot.transfersMax + '회</b>')) +
@@ -1065,7 +1077,9 @@
     if (can) {
       peek = g.transfers && g.legs.length > 1
         ? ' · ' + esc(g.legs[0].to) + ' 환승'
-        : ' · ' + (g.legs[0].stops || 1) + (g.legs[0].mode === 'bus' ? '정거장' : '개 역');
+        /* 단위는 'N개 역' 하나로 통일한다. 예전에는 버스만 'N정거장' 이라 같은 화면에
+           두 단위가 섞였고, 그게 서로 다른 값을 세는 것처럼 읽혔다. */
+        : ' · ' + (g.legs[0].stops || 1) + '개 역';
     }
     return '<div class="stop' + (can ? ' can' : '') + (far ? ' far' : '') + '" data-g="' + gi + '"' +
       (can ? ' tabindex="0" role="button" aria-expanded="false"' : '') +
@@ -1103,7 +1117,7 @@
       var label = bus ? '버스 ' + esc(l.lineName) : esc(l.lineName);
       return tf + '<div class="leg' + (bus ? ' bus' : '') + '"><i style="--c:' + c + '"></i>' +
         '<div><b>' + label + '</b> · ' + esc(l.from) + ' → ' + esc(l.to) +
-        ' · ' + (l.stops || 1) + (bus ? '정거장' : '개 역') +
+        ' · ' + (l.stops || 1) + '개 역' +
         (l.estimated ? ' <span style="color:#7C857A">(추정 구간)</span>' : '') + '</div></div>';
     });
     /* 무엇을 그린 건지 밝힌다.

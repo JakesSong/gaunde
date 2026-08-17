@@ -407,8 +407,10 @@ export class MetroGraph {
 
     const byMode = {};
     for (const mode of modes) {
+      /* minMax 는 후보 풀 전체(scored)에서 한 번만 구한 값이다. 기준별로 다시 세지 않는다 —
+         같은 참여자·같은 후보 풀이면 "가장 먼 사람 최선값" 은 기준과 무관하게 하나다. */
       const r = rankByMode(scored, mode, {
-        toleranceSec, slackSec, topN, diversify, linesOf, dirOf,
+        toleranceSec, slackSec, topN, diversify, linesOf, dirOf, minMaxSec: minMax,
       });
       byMode[mode] = {
         best: decorate(r.list[0], r.cutoffSec),
@@ -514,13 +516,25 @@ export function normalizeModes(input) {
  * 환승 모드는 외곽 직통역이 이긴다. 제약을 두는 편이 답이 되는 유일한 길이다.
  *
  * 풀 밖 후보는 뒤에 시간순으로 붙는다 — 목록에서 사라지지는 않는다.
+ *
+ * opts.minMaxSec — "가장 먼 사람의 시간" 최선값을 밖에서 받는다.
+ *   이건 후보 풀 전체의 성질이라 모드와 무관하게 같은 값이어야 한다. entries 만 보고
+ *   다시 세면, 기준마다 다른 부분집합이 들어오는 호출부(ODsay 어댑터)에서 값이 갈린다 —
+ *   실제로 요금 기준 32분 / 환승 기준 30분처럼 화면에 서로 다른 "최선값" 이 찍혔다.
+ *   그 값은 컷오프 밴드('+10분 안 후보 N곳')의 기준선이기도 해서 밴드까지 같이 틀어진다.
  */
 export function rankByMode(entries, mode, opts = {}) {
   const { toleranceSec = 0, slackSec = 0, topN = 5, diversify = false, linesOf, dirOf } = opts;
   const cmp = MODE_COMPARATORS[mode] || MODE_COMPARATORS.time;
-  let minMax = Infinity;
-  for (const e of entries) if (e.maxSec < minMax) minMax = e.maxSec;
-  const cutoffSec = minMax + (mode === 'time' ? toleranceSec : slackSec);
+  let localMin = Infinity;
+  for (const e of entries) if (e.maxSec < localMin) localMin = e.maxSec;
+  const minMax = Number.isFinite(opts.minMaxSec) ? opts.minMaxSec : localMin;
+  const slack = mode === 'time' ? toleranceSec : slackSec;
+  let cutoffSec = minMax + slack;
+  /* 공통 최선값이 이 목록의 어느 후보보다도 낮으면(다른 기준의 후보가 세운 기록이면)
+     이 기준에는 풀이 통째로 비어 정렬 규칙이 사라진다. 그때만 컷오프를 이 목록 기준으로
+     되돌린다 — 보고하는 minMaxSec 는 공통값 그대로다(그게 사실이니까). */
+  if (Number.isFinite(localMin) && localMin > cutoffSec) cutoffSec = localMin + slack;
 
   const pool = [], rest = [];
   for (const e of entries) (e.maxSec <= cutoffSec ? pool : rest).push(e);

@@ -201,7 +201,7 @@ log('\n■ 결과 화면 개편 확인');
   const keys = lastWin.document.getElementById('rkeys');
   const t = keys.textContent.replace(/\s+/g, ' ').trim();
   check('핵심 수치 타일 노출', !keys.hidden && /\d+분/.test(t) && /[\d,]+원/.test(t), t);
-  check('핵심 수치는 가장 먼 사람 · 1인 요금', /가장 먼 사람/.test(t) && /1인 요금/.test(t), t);
+  check('핵심 수치는 가장 먼 사람 · 1인 평균 요금', /가장 먼 사람/.test(t) && /1인 평균 요금/.test(t), t);
 }
 const foodHref = decodeURIComponent(lastWin.document.getElementById('food').href);
 const cafeHref = decodeURIComponent(lastWin.document.getElementById('cafe').href);
