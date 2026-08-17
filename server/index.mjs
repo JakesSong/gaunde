@@ -115,7 +115,10 @@ async function track(event, meeting, meta) {
 const RESULT_CACHE_TTL_DAYS = 7;
 /* 응답 모양이 바뀌면 옛 스냅샷은 새 화면과 맞지 않는다(후보 개수·환승 필드 등).
    모양을 바꿀 때마다 올려서 캐시를 통째로 무효화한다. */
-const RESULT_SHAPE_REV = 5;
+/* 6: 레그 없는 옛 route_cache 행을 걸러내기 시작했다. 그 전에 만들어진 스냅샷에는
+   그래프 폴백 경로가 그대로 굳어 있어서(요약의 환승 수와 그림이 어긋난 채로),
+   route_cache 가 다시 채워져도 스냅샷을 버리지 않으면 화면이 그대로다. */
+const RESULT_SHAPE_REV = 6;
 const graphFingerprint = graph.meta.generatedAt || '';
 const resultCacheStats = { hits: 0, misses: 0 };
 

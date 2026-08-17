@@ -63,6 +63,9 @@ create table if not exists route_cache (
   fare       integer,
   transfers  integer,
   legs       text,
+  -- 그 행을 채운 레그 스키마 판(server/db.mjs 의 ROUTE_CACHE_LEGS_REV).
+  -- 레그를 담기 전에 쓰인 행은 null 이라, 읽을 때 걸러져 다시 채워진다.
+  legs_rev   integer,
   updated_at timestamptz not null default now(),
   primary key (from_id, to_id)
 );

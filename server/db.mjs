@@ -13,6 +13,22 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * route_cache 레그 스키마 판(版).
+ *
+ * legs(실제 경로의 탑승 구간)는 나중에 추가한 열이라, 그 전에 저장된 행에는 없다.
+ * 그 행이 캐시 수명(7일) 동안 살아 있는 한 화면은 조용히 지하철 그래프 경로로
+ * 되돌아가고, 요약의 환승 수와 그림이 어긋난 채로 남는다.
+ *
+ * 그래서 읽을 때 "레그가 없고, 레그를 담기 시작한 뒤에 쓰인 행도 아닌" 행은
+ * 캐시에 없는 셈 친다 → 다음 조회에서 ODsay 로 다시 채워진다. 채워 넣을 때
+ * 이 판 번호를 같이 새기므로, 정말로 레그가 없는 경로(도보만 있는 응답 등)라도
+ * 한 번 다시 물어본 뒤에는 그대로 캐시에 남는다 — 매번 다시 부르지 않는다.
+ *
+ * 레그 모양을 바꿔서 옛 행을 다시 받아와야 할 때 이 번호를 올린다.
+ */
+export const ROUTE_CACHE_LEGS_REV = 1;
+
 /** 공유 링크 토큰: 사람이 읽고 옮겨적을 수 있게 혼동되는 글자를 뺀 22^10 공간 */
 const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 export function newToken(len = 10) {
@@ -155,7 +171,8 @@ class SqliteStore {
 
   /* 환승 횟수·경로 레그는 나중에 추가했다. 화면에 "환승 N회" 와 경로 그림으로 나가는 값이라
      그래프 짐작이 아니라 실제 경로 값을 써야 해서 캐시에도 같이 담는다.
-     legs 는 JSON 문자열이다 (탑승 구간 배열 — 캐시가 채워지기 전 행에는 없다). */
+     legs 는 JSON 문자열이다 (탑승 구간 배열 — 캐시가 채워지기 전 행에는 없다).
+     legs_rev 는 그 행을 어느 레그 스키마로 채웠는지 (ROUTE_CACHE_LEGS_REV 참고). */
   migrateRouteTransfers() {
     const cols = this.db.prepare('PRAGMA table_info(route_cache)').all();
     if (!cols.some((c) => c.name === 'transfers')) {
@@ -164,25 +181,31 @@ class SqliteStore {
     if (!cols.some((c) => c.name === 'legs')) {
       this.db.exec('ALTER TABLE route_cache ADD COLUMN legs TEXT');
     }
+    if (!cols.some((c) => c.name === 'legs_rev')) {
+      this.db.exec('ALTER TABLE route_cache ADD COLUMN legs_rev INTEGER');
+    }
   }
 
+  /* 레그 없는 옛 행은 없는 셈 친다 — 마지막 조건이 그것이다 (ROUTE_CACHE_LEGS_REV 참고). */
   async getRouteCache(fromId, toId, ttlDays) {
     return this.db.prepare(
       `SELECT minutes, fare, transfers, legs FROM route_cache
        WHERE from_id = ? AND to_id = ?
-         AND julianday('now') - julianday(updated_at) < ?`,
-    ).get(fromId, toId, ttlDays) ?? null;
+         AND julianday('now') - julianday(updated_at) < ?
+         AND ((legs IS NOT NULL AND legs <> '') OR COALESCE(legs_rev, 0) >= ?)`,
+    ).get(fromId, toId, ttlDays, ROUTE_CACHE_LEGS_REV) ?? null;
   }
 
   async putRouteCache(fromId, toId, minutes, fare, transfers, legs) {
     this.db.prepare(
-      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers, legs) VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers, legs, legs_rev)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(from_id, to_id) DO UPDATE SET
          minutes = excluded.minutes, fare = excluded.fare, transfers = excluded.transfers,
-         legs = excluded.legs,
+         legs = excluded.legs, legs_rev = excluded.legs_rev,
          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
     ).run(fromId, toId, minutes, fare ?? null,
-      Number.isFinite(transfers) ? transfers : null, legs ?? null);
+      Number.isFinite(transfers) ? transfers : null, legs ?? null, ROUTE_CACHE_LEGS_REV);
   }
 
   async getRouteCacheCount() {
@@ -387,6 +410,8 @@ class PostgresStore {
       ALTER TABLE route_cache ADD COLUMN IF NOT EXISTS transfers integer;
       -- 실제 경로의 탑승 구간(JSON). 시간을 잰 그 경로를 그대로 그리려고 같이 담는다.
       ALTER TABLE route_cache ADD COLUMN IF NOT EXISTS legs text;
+      -- 그 행을 채운 레그 스키마 판. 옛 행은 null 이라 읽을 때 걸러진다.
+      ALTER TABLE route_cache ADD COLUMN IF NOT EXISTS legs_rev integer;
       CREATE UNIQUE INDEX IF NOT EXISTS events_feedback_once
         ON events(meeting_id, client_key) WHERE event = 'result_feedback';
     `);
@@ -450,24 +475,27 @@ class PostgresStore {
     );
   }
 
+  /* 레그 없는 옛 행은 없는 셈 친다 — 마지막 조건이 그것이다 (ROUTE_CACHE_LEGS_REV 참고). */
   async getRouteCache(fromId, toId, ttlDays) {
     const { rows } = await this.pool.query(
       `SELECT minutes, fare, transfers, legs FROM route_cache
-       WHERE from_id = $1 AND to_id = $2 AND updated_at > now() - ($3 || ' days')::interval`,
-      [fromId, toId, String(ttlDays)],
+       WHERE from_id = $1 AND to_id = $2 AND updated_at > now() - ($3 || ' days')::interval
+         AND ((legs IS NOT NULL AND legs <> '') OR COALESCE(legs_rev, 0) >= $4)`,
+      [fromId, toId, String(ttlDays), ROUTE_CACHE_LEGS_REV],
     );
     return rows[0] ?? null;
   }
 
   async putRouteCache(fromId, toId, minutes, fare, transfers, legs) {
     await this.pool.query(
-      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers, legs)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers, legs, legs_rev)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (from_id, to_id)
        DO UPDATE SET minutes = EXCLUDED.minutes, fare = EXCLUDED.fare,
-                     transfers = EXCLUDED.transfers, legs = EXCLUDED.legs, updated_at = now()`,
+                     transfers = EXCLUDED.transfers, legs = EXCLUDED.legs,
+                     legs_rev = EXCLUDED.legs_rev, updated_at = now()`,
       [fromId, toId, minutes, fare ?? null,
-        Number.isFinite(transfers) ? transfers : null, legs ?? null],
+        Number.isFinite(transfers) ? transfers : null, legs ?? null, ROUTE_CACHE_LEGS_REV],
     );
   }
 

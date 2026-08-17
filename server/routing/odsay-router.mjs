@@ -207,8 +207,10 @@ export class OdsayRouter extends GraphRouter {
    * 신선한 응답일 때만 있는 필드를 섞어 내보내면, 캐시가 차오른 뒤에야
    * 조용히 동작이 달라진다. 그래서 여기서 모양을 맞춰 내보낸다.
    *
-   * legs 는 캐시에 늦게 추가한 열이라 예전 행에는 없다(null). 그때는 화면이
-   * 지하철 그래프 경로로 되돌아간다 — 캐시 수명(7일)이 지나면 저절로 채워진다.
+   * legs 는 캐시에 늦게 추가한 열이라 예전 행에는 없다(null). 그런 행은 저장소가
+   * 읽을 때 걸러내므로(server/db.mjs 의 ROUTE_CACHE_LEGS_REV) 여기서는 캐시 없음으로
+   * 보이고, 곧바로 ODsay 로 다시 채워진다. 즉 캐시 히트에 legs 가 없다면 그건
+   * 실제로 탑승 구간이 없는 경로다 — 그때만 화면이 지하철 그래프 경로로 되돌아간다.
    */
   async lookupPair(fromId, toId) {
     const cached = await this.store.getRouteCache(fromId, toId, ODSAY.cacheTtlDays);
