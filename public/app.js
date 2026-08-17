@@ -390,6 +390,7 @@
     $('rwhy').hidden = true;
     $('rkeys').hidden = true;
     $('rbasis').hidden = true;
+    $('rhops').hidden = true;
     $('rmarks').hidden = true;
     $('rlink').hidden = true;
     showErr('err2', '');
@@ -417,7 +418,7 @@
         $('rstat').hidden = false;
         $('rmap').innerHTML = '<div class="rail"></div><div class="railfill"></div>';
         $('raxis').hidden = true; $('rlegend').hidden = true; $('rwhy').hidden = true;
-        $('rkeys').hidden = true; $('rbasis').hidden = true;
+        $('rkeys').hidden = true; $('rbasis').hidden = true; $('rhops').hidden = true;
         $('rmarks').hidden = true;
         $('modes').hidden = true;
         $('verdict').textContent = e.message;
@@ -521,13 +522,22 @@
      화면 어디서나 합으로 통일하고, 라벨에도 '합' 을 적는다. */
   function hops(a) { return a.transfersTotal === undefined ? null : a.transfersTotal; }
 
+  /* 요금 눈금 한 칸(100원) 안쪽 차이는 사실상 같은 값이다.
+     1인 평균 요금은 합을 사람 수로 나눈 값이라 '+37원' 같은 수가 나오는데,
+     그렇게 적으면 그 37원 때문에 순위가 밀린 것처럼 읽힌다. 실제로 순위를 가른 건
+     대개 그다음 기준(시간)이다. */
+  var FARE_TIE_WON = 100;
+
   /* 지금 기준이 보는 값을 먼저 적는다. 요금 기준인데 시간 차이부터 나오면
      무엇을 보고 이 순서가 됐는지가 줄에서 안 읽힌다. */
   function altWhy(a, best) {
     if (a === best) return '추천';
     var out = [];
     if (state.mode === 'fare') {
-      out.push('요금 ' + diff(a.fareAvg - best.fareAvg, '원'));
+      var dFare = a.fareAvg - best.fareAvg;
+      out.push(Math.abs(dFare) > 0 && Math.abs(dFare) <= FARE_TIE_WON
+        ? '요금 거의 같음'
+        : '요금 ' + diff(dFare, '원'));
       out.push('가장 먼 사람 ' + diff(a.maxMin - best.maxMin, '분'));
     } else if (state.mode === 'transfers' && hops(a) !== null && hops(best) !== null) {
       out.push('환승 합 ' + diff(hops(a) - hops(best), '회'));
@@ -658,19 +668,30 @@
        한 사람 때문에 고른 것처럼 보이는데, 실제 2단계 선택은 전체 합으로 정해진다.
        셋째 타일만 기준을 따라간다 — 환승으로 골랐는데 환승 수가 화면에 없으면
        무엇을 보고 고른 건지 확인할 길이 없다. */
-    var third = state.mode === 'transfers' && hops(spot) !== null
-      ? '<b>' + hops(spot) + '회</b><span>환승 (모두 합)</span>'
-      /* '1인 요금' 이라고 적었더니 그 값을 내는 사람이 실제로 없다는 지적이 왔다.
-         이건 참여자별 요금의 평균이다 — 라벨에 '평균' 을 적어야 거짓말이 아니다. */
-      : '<b>' + won(spot.fareAvg) + '</b><span>1인 평균 요금' + (sel.fareApprox ? ' (근사치)' : '') + '</span>';
+    /* 타일 셋은 세 지표로 고정한다. 예전에는 셋째 칸이 기준을 따라 요금↔환승으로
+       갈아끼워져서, 기본(시간) 기준에서는 환승 수가 화면 어디에도 없었다 —
+       무엇을 보고 골랐는지 확인하려면 기준을 바꿔봐야 알 수 있는 화면이었다.
+       ('1인 요금' 이라고 적었더니 그 값을 내는 사람이 실제로 없다는 지적도 있었다.
+        이건 참여자별 요금의 평균이라 라벨에 '평균' 을 적어야 거짓말이 아니다.) */
     $('rstat').hidden = true;
     $('rkeys').innerHTML =
       '<div class="hi"><b>' + spot.maxMin + '분</b><span>가장 먼 사람</span></div>' +
       '<div><b>' + spot.avgMin + '분</b><span>평균</span></div>' +
-      '<div>' + third + '</div>';
+      '<div><b>' + won(spot.fareAvg) + '</b><span>1인 평균 요금' +
+        (sel.fareApprox ? ' (근사치)' : '') + '</span></div>';
     $('rkeys').hidden = false;
 
     renderBasis(spot);
+
+    /* 환승은 기준과 무관하게 늘 붙는다 — 타일에서 밀려난 자리를 여기가 받는다. */
+    var hopN = hops(spot);
+    $('rhops').innerHTML = hopN === null ? '' : '환승 합 <b>' + hopN + '회</b>' +
+      (spot.transfersMax === undefined ? '' : ' · 한 사람 최대 <b>' + spot.transfersMax + '회</b>');
+    $('rhops').hidden = hopN === null;
+
+    /* 공유 이미지에는 기준 토글이 없다. 이미지만 받은 사람도 무슨 기준으로 고른
+       결과인지 알 수 있게 캡쳐 전용 한 줄을 채워 둔다 (화면에서는 안 보인다). */
+    $('shotmode').textContent = (MODE_LABEL[state.mode] || '시간') + '을 아끼는 기준으로 고른 결과예요';
 
     /* 같은 역에서 출발하는 사람은 한 줄로 묶는다 — 위아래로 갈리면 같은 역이 두 번 나온다 */
     var groups = [];
@@ -979,6 +1000,7 @@
     var saved = localStorage.getItem(fbKey()) || '';
     var v = saved.split(':');
     $('fb').hidden = false;
+    $('fb').classList.remove('done');
     if (v[0] === 'bad' && !v[1]) return fbAskWhy();
     if (saved) return fbThanks(v[0]);
     $('fbq').textContent = '이 추천, 도움이 됐어요?';
@@ -988,6 +1010,7 @@
   }
 
   function fbAskWhy() {
+    $('fb').classList.remove('done');
     $('fbq').textContent = '어떤 점이 아쉬웠나요?';
     $('fbvote').hidden = true;
     $('fbwhy').hidden = false;
@@ -998,10 +1021,13 @@
   function fbThanks(kind) {
     $('fbvote').hidden = true;
     $('fbwhy').hidden = true;
+    /* 답을 받은 뒤에는 한 줄로 줄인다(.done). 다 끝난 위젯이 96px 를 계속 차지하면
+       그 아래 값어치 있는 것들이 밀릴 뿐이다. 문구도 한 줄에 들어가게 짧게 줄인다. */
     var line = kind === 'bad'
-      ? ['알려줘서 고마워요 🙏', '이 의견으로 추천 기준을 손볼게요']
-      : ['고마워요 🙌', '여러분 의견으로 역 추천을 다듬고 있어요'];
+      ? ['알려줘서 고마워요 🙏', '추천 기준을 손볼게요']
+      : ['고마워요 🙌', '역 추천을 다듬는 데 씁니다'];
     $('fbq').innerHTML = '<span class="fbthanks"><b>' + line[0] + '</b><i>' + line[1] + '</i></span>';
+    $('fb').classList.add('done');
     $('fbredo').hidden = false;
   }
 
@@ -1065,13 +1091,20 @@
     var hop = g.min === 0 ? '' : ' · ' + (g.transfers ? '환승 ' + g.transfers + '회' : '직통');
     var parts = [g.min + '분' + via + hop];
     if (g.fare) parts.push(won(g.fare));
+    /* 이 사람 시간이 실시간 길찾기에서 온 값인지 그래프 추정인지 — 사람마다 다르다.
+       32분과 33분으로 순위가 갈리는 판에서 근거의 질이 다르면 그 자리에서 보여야 한다.
+       상단 배지(.basis)는 "일부는 실시간" 까지만 말할 수 있어 누가 어느 쪽인지는 못 준다. */
+    var src = (g.min === 0 || g.timeSource === 'same-station') ? ''
+      : g.timeSource === 'odsay'
+        ? '<span class="src live">실시간</span>'
+        : '<span class="src">추정</span>';
     /* 각자 경로는 눌렀을 때 만든다.
        미리 그려두면 접혀 있어도 이름·역 이름이 DOM 에 남아 다이어그램 한 줄이
        실제보다 길어 보이고, 안 볼 사람 몫까지 매번 만들게 된다. */
     var can = g.legs.length > 0;
     /* 접힌 상태에서도 무엇이 열리는지 한 조각 미리 보여준다. "경로 보기" 만 있으면
        무슨 화면이 뜨는지 몰라 안 누른다. 환승이 있으면 첫 환승역이 가장 궁금한 값이고,
-       직통이면 이미 옆 칸에 "직통" 이 있으니 대신 정거장 수를 준다.
+       직통이면 이미 옆 칸에 "직통" 이 있으니 대신 지나는 역 수를 준다.
        .more 는 펼칠 때 "접기" 로 바뀌므로, 미리보기는 지울 수 있게 따로 둔다. */
     var peek = '';
     if (can) {
@@ -1091,10 +1124,10 @@
       (can ? ' <span class="more">경로 보기</span><span class="peek">' + peek + '</span>' : '') +
       '</small></div>' +
       '<div class="node"' + (nodeStyle ? ' style="' + nodeStyle + '"' : '') + '></div>' +
-      '<div class="mins">' + parts.join(' · ') + '</div></div></div>';
+      '<div class="mins">' + parts.join(' · ') + src + '</div></div></div>';
   }
 
-  /* 한 사람의 실제 경로 — 어디서 갈아타는지, 몇 정거장인지.
+  /* 한 사람의 실제 경로 — 어디서 갈아타는지, 몇 개 역을 지나는지.
    * 이미 응답에 다 들어 있던 값이라 새로 계산하지 않는다. 보여주기만 한다. */
   function legsHtml(g) {
     var r = g.route || {};
@@ -1271,15 +1304,21 @@
 
   function captureShot() {
     var el = $('shot');
-    /* 근거 블록은 화면에서는 접혀 있지만 공유 이미지에는 들어가야 한다 —
-       이미지를 받는 사람은 펼칠 수가 없다. 뜨는 동안만 열고 원래대로 되돌린다. */
-    var why = $('rwhy');
-    var wasOpen = why.open;
-    why.open = true;
+    /* 이미지와 링크 화면은 같은 것을 보여줘야 한다.
+       예전에는 '왜 이 역' 근거를 캡쳐하는 동안만 강제로 펼쳐서, 링크로 들어온 사람이
+       보는 화면(접혀 있음)과 이미지가 서로 달랐다 — 같은 결과를 두 벌로 만든 셈이다.
+       그래서 근거는 화면 상태 그대로 두고, 대신 '다른 후보' 목록을 이미지 안으로
+       들여온다. 이미지를 받은 사람이 가장 궁금해하는 건 "여기 말고 어디" 다.
+       (기준이 무엇이었는지는 캡쳐 전용 한 줄 #shotmode 이 말한다.) */
+    var alts = $('alts');
+    var altsParent = alts.parentNode;
+    var altsNext = alts.nextSibling;
+    var movedAlts = !alts.hidden;
+    if (movedAlts) el.appendChild(alts);
     el.classList.add('capturing');
     var restore = function () {
       el.classList.remove('capturing');
-      why.open = wasOpen;
+      if (movedAlts) altsParent.insertBefore(alts, altsNext);
     };
     return html2canvas(el, {
       backgroundColor: '#FFFFFF',

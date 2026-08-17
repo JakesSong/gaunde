@@ -215,7 +215,7 @@ describe('다이어그램 읽기 보조', () => {
 
   test('시간축·범례·근거는 공유 이미지(#shot) 안에 있다', () => {
     // html2canvas 는 #shot 만 뜬다. 밖에 두면 공유 이미지에서 설명이 빠진다.
-    const shot = html.match(/id="shot"[\s\S]*?<\/div>\s*<!-- 위치 A/);
+    const shot = html.match(/id="shot"[\s\S]*?<!-- \/shot -->/);
     assert.ok(shot, '#shot 영역을 찾지 못했다');
     for (const id of ['raxis', 'rlegend', 'rwhy', 'rkeys', 'rbasis', 'rmarks']) {
       assert.ok(shot[0].includes('id="' + id + '"'), `#${id} 가 #shot 밖에 있다`);
@@ -225,7 +225,7 @@ describe('다이어그램 읽기 보조', () => {
   test('결과 화면에 중복 헤더가 없다 — 요약은 수치 타일 두 칸이 한다', () => {
     /* "정보가 너무 많다" 피드백. 큰 제목(가장 먼 사람도 N분)과 설명문(N명 · 평균 N분)이
        바로 아래 .keys 타일과 같은 숫자를 두 번 말하고 있었다. 되돌아오지 않게 못 박는다. */
-    const shot = html.match(/id="shot"[\s\S]*?<\/div>\s*<!-- 위치 A/)[0];
+    const shot = html.match(/id="shot"[\s\S]*?<!-- \/shot -->/)[0];
     assert.ok(!/<h2[^>]*id="rtitle"/.test(shot), '결과 헤더(h2#rtitle)가 다시 들어왔다');
     assert.ok(!/id="rlede"/.test(shot), '결과 설명문(#rlede)이 다시 들어왔다');
     const iStat = shot.indexOf('id="rstat"');

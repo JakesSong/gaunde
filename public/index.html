@@ -199,13 +199,21 @@
     background:rgba(239,124,28,.15);color:var(--pin);font-size:9.5px;font-weight:700;
     letter-spacing:.02em;vertical-align:2px}
 
+  /* 사람마다 근거의 질이 다르다. 32분과 33분으로 순위가 갈리는데 한쪽은 실시간 길찾기,
+     한쪽은 그래프 추정이면 그 차이는 숫자 옆에서 바로 보여야 한다.
+     상단 배지(.basis)는 "일부는 실시간" 까지만 말할 수 있어서 누가 어느 쪽인지는 못 준다. */
+  .stop .src{display:inline-block;margin-left:5px;padding:0 5px;border-radius:999px;
+    border:1px solid var(--rule);background:#F4F6F1;color:#4A524A;
+    font-size:9.5px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;vertical-align:1px}
+  .stop .src.live{background:var(--fb-bg);border-color:rgba(0,168,77,.35);color:var(--fb-ink)}
+
   /* ---- 각자 경로 펼치기 (참여자 줄을 누르면) ---- */
   .stop.can .stopmain{cursor:pointer;border-radius:10px}
   .stop.can:hover .who small{color:var(--line)}
   .stop.can:focus-visible{outline:3px solid var(--pin);outline-offset:2px;border-radius:10px}
   .who .more{font-size:10.5px;color:var(--sub);letter-spacing:-.01em}
   .stop.open .who .more{color:var(--line);font-weight:700}
-  /* 접힌 상태에서 무엇이 열리는지 미리 보여주는 조각(첫 환승역 / 정거장 수).
+  /* 접힌 상태에서 무엇이 열리는지 미리 보여주는 조각(첫 환승역 / 지나는 역 수).
      펼치면 그 내용이 아래에 그대로 나오므로 미리보기는 치운다.
      역 이름이 들어가는 자리라 .empty 의 흐린 회색(#B9C1B5)은 쓰지 않는다 — 읽으라고 둔 값이다. */
   .who .peek{font-size:10.5px;color:var(--sub);letter-spacing:-.01em}
@@ -245,6 +253,15 @@
   .basis::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--sub);flex:none}
   .basis.live{background:var(--fb-bg);border-color:rgba(0,168,77,.35);color:var(--fb-ink)}
   .basis.live::before{background:var(--line)}
+
+  /* 환승 수는 기준과 무관하게 늘 보여야 한다. 예전에는 셋째 타일이 기준에 따라
+     요금↔환승으로 갈아끼워져서, 기본(시간) 기준에서는 환승이 화면에서 통째로 사라졌다.
+     타일 셋은 세 지표(가장 먼 사람·평균·1인 평균 요금)로 고정하고,
+     환승은 계산 기준 배지 옆 칩으로 늘 붙여 둔다. */
+  .hops{display:inline-flex;align-items:center;margin:0 0 12px 6px;padding:5px 10px;
+    border-radius:999px;border:1px solid var(--rule);background:#fff;color:#4A524A;
+    font-size:11px;line-height:1.4;letter-spacing:-.01em;white-space:nowrap}
+  .hops b{font-weight:700;color:var(--ink)}
 
   /* 시간 외 표식 */
   .marks{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
@@ -297,9 +314,10 @@
   .verdict b{color:var(--ink)}
 
   /* ---- 고르는 기준 토글 ----
-     후보 목록 바로 위에 둔다. 이 버튼이 바꾸는 것이 아래 목록과 위 추천이라,
-     화면에서 둘 사이에 있어야 무엇이 바뀌었는지가 눈에 들어온다. */
-  .modes{margin-top:14px;border-top:1px solid var(--rule);padding-top:12px}
+     결과 화면 맨 위다. 이 버튼이 바꾸는 건 아래 후보 목록만이 아니라 결과 전체라,
+     결과보다 아래에 두면 있는 줄도 모르고 나간다(실제 피드백). 구분선은 아래로 준다 —
+     위에 아무것도 없는 자리에 윗줄을 그으면 화면이 잘린 것처럼 보인다. */
+  .modes{margin:0 0 14px;border-bottom:1px solid var(--rule);padding-bottom:12px}
   .modes .rhead{margin-bottom:8px}
   .moderow{display:flex;gap:6px}
   .modebtn{flex:1;padding:9px 0;font-size:12.5px;font-weight:700;letter-spacing:-.02em;
@@ -363,6 +381,17 @@
   .fbthanks b{font-size:14px;font-weight:700;color:var(--fb-ok)}
   .fbthanks i{font-style:normal;font-size:11.5px;line-height:1.5;color:var(--fb-ink)}
 
+  /* 답을 받은 뒤에는 한 줄로 줄인다. 크기를 붙들어 둘 이유는 "방금 누른 자리가
+     통째로 접힌 것처럼 보인다" 였는데, 그건 투표 버튼이 사라지는 순간의 이야기다.
+     다 끝난 박스가 96px 를 계속 차지하면 그 아래가 밀릴 뿐이다. */
+  .fb.done{min-height:0;padding:9px 12px}
+  .fb.done .fbq{margin-bottom:0}
+  .fb.done .fbthanks{flex-direction:row;flex-wrap:wrap;justify-content:center;
+    align-items:baseline;gap:2px 6px;padding:0}
+  .fb.done .fbthanks b{font-size:12.5px}
+  .fb.done .fbthanks i{font-size:11px}
+  .fb.done .fbredo{margin-top:5px}
+
   /* 되돌리기. 한 번 누르면 버튼이 사라져 오누름을 취소할 수 없다는 지적이 있었다.
      주 동작이 아니므로 밑줄 링크처럼만 둔다. */
   .fbredo{display:block;margin:8px auto 0;font:inherit;font-size:11px;letter-spacing:-.01em;
@@ -401,6 +430,12 @@
   .shotbrand i{font-style:normal;color:var(--line)}
   .capturing{padding:18px}
   .capturing .shotbrand{display:block}
+  /* 캡쳐 전용 한 줄 — 이미지에는 기준 토글이 없어서, 무슨 기준으로 고른 결과인지
+     이미지만 받은 사람은 알 길이 없다. hidden 속성이 아니라 클래스로 감춘다:
+     [hidden]{display:none!important} 가 .capturing 규칙을 이기기 때문이다. */
+  .shotmode{display:none;margin:0 0 10px;font-size:11px;font-weight:700;
+    color:var(--sub);letter-spacing:-.01em}
+  .capturing .shotmode{display:block}
 
   /* ---- 참여자 수정/삭제 ---- */
   .row .tools{display:flex;gap:4px;margin-left:8px;flex:none}
@@ -507,15 +542,33 @@
 
     <!-- 3. 결과 -->
     <section class="screen" id="s2">
+      <!-- 무엇을 기준으로 고를지. 서버가 기준별 결과를 통째로 내려주므로
+           눌러도 다시 계산하지 않는다. 기본은 언제나 '시간'이다.
+
+           맨 위다. 이 버튼이 바꾸는 건 아래 후보 목록만이 아니라 결과 전체(추천역·수치·
+           경로·근거)인데, 예전에는 스크롤을 한참 내려야 나와서 있는 줄도 모르고 나가는
+           사람이 많았다. 결과를 바꾸는 스위치는 결과보다 위에 있어야 한다. -->
+      <div class="modes" id="modes" hidden>
+        <div class="rhead"><b>무엇을 아낄까요?</b><span id="modenote">기본은 시간</span></div>
+        <div class="moderow" id="moderow" role="group" aria-label="고르는 기준">
+          <button class="modebtn on" type="button" data-m="time" aria-pressed="true">시간</button>
+          <button class="modebtn" type="button" data-m="fare" aria-pressed="false">요금</button>
+          <button class="modebtn" type="button" data-m="transfers" aria-pressed="false">환승</button>
+        </div>
+      </div>
+
       <!-- shot: 이미지로 캡쳐되는 영역 -->
       <div id="shot">
         <div class="shotbrand">가운<i>데</i></div>
+        <!-- 캡쳐할 때만 나오는 한 줄. 이미지에는 기준 토글이 없어서, 무슨 기준으로
+             고른 결과인지 이미지만 보는 사람은 알 길이 없다. -->
+        <p class="shotmode" id="shotmode"></p>
         <!-- 결과가 오기 전(또는 못 올 때)에만 뜨는 한 줄. 결과가 뜨면 숨는다 —
              요약은 아래 .keys 두 칸이 이미 하고 있어서 헤더를 따로 두지 않는다. -->
         <p class="rstat" id="rstat" hidden></p>
 
         <div class="keys" id="rkeys" hidden></div>
-        <p class="basis" id="rbasis" hidden></p>
+        <p class="basis" id="rbasis" hidden></p><span class="hops" id="rhops" hidden></span>
 
         <!-- 색칩 범례는 그림 위. 그림을 다 본 뒤에 색 설명을 만나면 이미 잘못 읽은 뒤다. -->
         <p class="legend" id="rlegend" hidden></p>
@@ -532,9 +585,20 @@
           <summary>왜 이 역인가요?</summary>
           <div class="whybody" id="rwhybody"></div>
         </details>
+      </div><!-- /shot -->
+
+      <div class="acts" id="acts" hidden>
+        <a class="btn ghost act" id="food" target="_blank" rel="noopener">🍜 맛집<small>카카오맵에서 보기</small></a>
+        <a class="btn ghost act" id="cafe" target="_blank" rel="noopener">☕ 카페<small>카카오맵에서 보기</small></a>
       </div>
 
-      <!-- 위치 A: 다이어그램·요약을 다 본 직후 -->
+      <div class="alts" id="alts" hidden>
+        <div class="rhead"><b>다른 후보</b><span>눌러서 비교</span></div>
+        <div id="altrows"></div>
+      </div>
+
+      <!-- 피드백은 맨 아래다. 예전에는 다이어그램 바로 밑에 있어서, 값어치가 훨씬 큰
+           '다른 후보' 를 보기 전에 만족/불만족부터 물었다. 물어보는 건 다 보여준 뒤다. -->
       <div class="fb" id="fb" hidden>
         <div class="fbq" id="fbq">이 추천, 도움이 됐어요?</div>
         <div class="fbrow" id="fbvote">
@@ -549,27 +613,6 @@
         </div>
         <!-- 오누름을 되돌릴 길. 한 번 누르면 버튼이 사라져 취소할 수 없다는 지적이 있었다. -->
         <button class="fbredo" type="button" id="fbredo" hidden>다시 고르기</button>
-      </div>
-
-      <div class="acts" id="acts" hidden>
-        <a class="btn ghost act" id="food" target="_blank" rel="noopener">🍜 맛집<small>카카오맵에서 보기</small></a>
-        <a class="btn ghost act" id="cafe" target="_blank" rel="noopener">☕ 카페<small>카카오맵에서 보기</small></a>
-      </div>
-
-      <!-- 무엇을 기준으로 고를지. 서버가 기준별 결과를 통째로 내려주므로
-           눌러도 다시 계산하지 않는다. 기본은 언제나 '시간'이다. -->
-      <div class="modes" id="modes" hidden>
-        <div class="rhead"><b>무엇을 아낄까요?</b><span id="modenote">기본은 시간</span></div>
-        <div class="moderow" id="moderow" role="group" aria-label="고르는 기준">
-          <button class="modebtn on" type="button" data-m="time" aria-pressed="true">시간</button>
-          <button class="modebtn" type="button" data-m="fare" aria-pressed="false">요금</button>
-          <button class="modebtn" type="button" data-m="transfers" aria-pressed="false">환승</button>
-        </div>
-      </div>
-
-      <div class="alts" id="alts" hidden>
-        <div class="rhead"><b>다른 후보</b><span>눌러서 비교</span></div>
-        <div id="altrows"></div>
       </div>
 
       <p class="err" id="err2"></p>
@@ -604,6 +647,6 @@
 
 <script src="./html2canvas.min.js?v=e87e5507"></script>
 <script src="./config.js?v=16dfd945"></script>
-<script src="./app.js?v=e97d006f"></script>
+<script src="./app.js?v=f107310f"></script>
 </body>
 </html>
