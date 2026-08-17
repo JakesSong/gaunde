@@ -257,7 +257,13 @@
      이미 잘못 읽은 뒤라서, 읽기 전에 색의 뜻을 먼저 주는 편이 맞다. */
   .legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin:0 0 8px;
     font-size:10.5px;color:var(--sub);letter-spacing:-.01em}
-  .legend i{display:inline-flex;align-items:center;gap:4px;font-style:normal}
+  /* 칩은 줄지 않는다(flex:0 0 auto). 기본값(flex-shrink:1)이면 칩이 여럿일 때
+     한 줄에 우겨 넣으려고 각 칩을 min-content 까지 줄이는데, 한국어의 min-content 는
+     한 글자라서 "수인/분당/선" 처럼 세로로 갈린다 — 축 캡션(.axis)이 flex 때문에
+     세로로 쪼개졌던 것과 같은 사고다. 넘치면 줄이는 게 아니라 다음 줄로 내려가야 한다.
+     nowrap 은 칩 안 텍스트가 끊기지 않게 하는 두 번째 잠금이다. */
+  .legend i{display:inline-flex;align-items:center;gap:4px;font-style:normal;
+    flex:0 0 auto;white-space:nowrap}
   .legend i::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--c);flex:none}
 
   /* 왜 이 역인지 — 첫 화면은 접어두고 누르면 펼친다 (근거는 그대로 둔다) */
