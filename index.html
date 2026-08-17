@@ -176,6 +176,18 @@
   .stop.hit .node{width:26px;height:26px;box-shadow:0 0 0 6px rgba(239,124,28,.14)}
   .stop.hit .node::after{inset:5px}
   .stop.hit .who{font-size:19px;font-weight:800;letter-spacing:-.045em}
+  /* 긴 역 이름. '동대문역사문화공원'(9자)이 '…공/원' 으로 세로로 갈려 깨진다는 피드백.
+     이 칸은 노드를 레일 한가운데 두려고 폭이 50% 로 고정돼 있어 늘릴 수가 없다.
+     그래서 줄바꿈을 막고(nowrap) 글자 수만큼 크기를 한 단계씩 줄인다.
+     등급(n6~n11)은 app.js 의 nameFit() 이 글자 수를 보고 붙인다.
+     노선도에서 가장 긴 이름이 12자('남부터미널(예술의전당)')라 n11 이 바닥이다. */
+  .stop.hit .who{white-space:nowrap}
+  .stop.hit .who.n6{font-size:17.5px}
+  .stop.hit .who.n7{font-size:16px}
+  .stop.hit .who.n8{font-size:14.5px}
+  .stop.hit .who.n9{font-size:13.5px}
+  .stop.hit .who.n10{font-size:12.5px}
+  .stop.hit .who.n11{font-size:11.5px}
   .stop.hit .mins{font-size:12px;font-weight:700;color:var(--pin);letter-spacing:.04em}
 
   /* 가장 오래 걸리는 사람. 추천의 기준이 되는 값인데 27분 vs 26분처럼 1분 차이로
@@ -214,7 +226,7 @@
   .rstat{margin:0 0 12px;font-size:14px;font-weight:700;letter-spacing:-.03em;color:#4A524A}
 
   /* ---- 핵심 수치 · 계산 기준 배지 ---- */
-  /* 칸이 둘에서 셋(가장 먼 사람 · 평균 · 1인 요금)으로 늘었다. 375px 에서도 세 칸이
+  /* 칸이 둘에서 셋(가장 먼 사람 · 평균 · 1인 평균 요금)으로 늘었다. 375px 에서도 세 칸이
      한 줄에 들어가야 해서 여백과 글자를 조금씩 줄인다 — 다만 이 숫자가 화면에서
      제일 커야 한다는 조건(.lede 보다 충분히 큼)은 그대로 지킨다. */
   .keys{display:flex;gap:6px;margin:0 0 10px}
@@ -592,6 +604,6 @@
 
 <script src="./html2canvas.min.js?v=e87e5507"></script>
 <script src="./config.js?v=16dfd945"></script>
-<script src="./app.js?v=f95b72fb"></script>
+<script src="./app.js?v=e97d006f"></script>
 </body>
 </html>
