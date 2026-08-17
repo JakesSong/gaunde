@@ -242,10 +242,15 @@
      노드 사이 간격은 시간 차이다. 안 밝히면 지도로 읽힌다.
      그림 바로 아래 캡션 자리다 — 그래서 아래 여백(.verdict 까지의 간격)을
      .map 대신 이쪽이 들고 있다. */
-  .axis{display:flex;align-items:center;gap:6px;margin:0 0 18px;font-size:11px;
-    color:var(--sub);letter-spacing:-.01em}
-  .axis::before{content:'';width:2px;height:11px;border-radius:1px;
-    background:linear-gradient(var(--line),var(--rule));flex:none}
+  /* 절대 flex 로 두지 않는다. flex 면 텍스트 조각과 <b> 가 각각 flex 아이템이 되어
+     min-content 로 쪼그라들고, 한 줄 캡션이 "세로/간격/은" 처럼 좁은 칸으로 갈려
+     세로로 쌓인다. 그냥 흐르는 문장이어야 한다 — 눈금 표시는 inline-block 으로 붙인다.
+     keep-all: 한국어는 기본값이면 단어 가운데서도 끊긴다. 끊길 자리는 띄어쓰기와 · 다. */
+  .axis{margin:0 0 18px;font-size:11px;line-height:1.55;
+    color:var(--sub);letter-spacing:-.01em;word-break:keep-all}
+  .axis::before{content:'';display:inline-block;vertical-align:-1px;
+    width:2px;height:10px;margin-right:6px;border-radius:1px;
+    background:linear-gradient(var(--line),var(--rule))}
   .axis b{color:#4A524A;font-weight:700}
 
   /* 호선색 범례 — 노선도 바로 위에 둔다. 그림을 다 본 뒤에 색 설명을 만나면
