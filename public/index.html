@@ -202,6 +202,8 @@
     background:#FBFCFA;font-size:11.5px;line-height:1.55;color:#4A524A;letter-spacing:-.02em}
   .legs .leg{display:flex;align-items:flex-start;gap:7px;padding:2px 0}
   .legs .leg i{width:8px;height:8px;border-radius:50%;background:var(--c);margin-top:5px;flex:none}
+  /* 버스 구간은 네모로 — 색만으로는 처음 보는 노선 색인지 버스인지 구분이 안 된다 */
+  .legs .leg.bus i{border-radius:2px}
   .legs .leg b{font-weight:700;color:var(--ink)}
   .legs .tf{padding:1px 0 1px 15px;color:var(--sub)}
   .legs .cap{display:block;margin-top:5px;color:var(--sub);font-size:10.5px;line-height:1.5}
@@ -579,8 +581,9 @@
   </div>
 
   <p class="foot">
-    <b>소요시간 계산</b> — 수도권 전철 노선도를 그래프로 만들어 각역정차 기준으로 직접 계산합니다.
-    1~8호선 서울교통공사 운영구간은 공표 실측 소요시간, 나머지는 역간거리 기반 추정치입니다.
+    <b>소요시간 계산</b> — 실시간 대중교통 길찾기(환승 대기·도보 포함)를 기본으로 씁니다.
+    실시간 값이 없는 구간은 수도권 전철 노선도를 그래프로 만들어 각역정차 기준으로 근사합니다
+    (1~8호선 실측, 나머지 역간거리 추정).
     <span id="cov"></span>
     <a href="https://github.com/JakesSong/gaunde" target="_blank" rel="noopener">데이터 출처·계산 방식</a>
     <button class="reset" id="reset2">처음으로</button>
@@ -589,6 +592,6 @@
 
 <script src="./html2canvas.min.js?v=e87e5507"></script>
 <script src="./config.js?v=16dfd945"></script>
-<script src="./app.js?v=71e213a7"></script>
+<script src="./app.js?v=f95b72fb"></script>
 </body>
 </html>

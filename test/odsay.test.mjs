@@ -29,7 +29,9 @@ function memStore() {
   return {
     rows: m,
     async getRouteCache(a, b) { return m.get(`${a}|${b}`) ?? null; },
-    async putRouteCache(a, b, minutes, fare, transfers) { m.set(`${a}|${b}`, { minutes, fare, transfers: transfers ?? null }); },
+    async putRouteCache(a, b, minutes, fare, transfers, legs) {
+      m.set(`${a}|${b}`, { minutes, fare, transfers: transfers ?? null, legs: legs ?? null });
+    },
     async getRouteCacheCount() { return m.size; },
   };
 }
@@ -129,6 +131,36 @@ describe('ODsay 응답 파싱', () => {
       assert.equal(r.value.minutes, 30);
       assert.equal(r.value.fare, null, String(payment));
     }
+  });
+
+  test('탑승 구간(subPath)을 뽑고 도보는 뺀다', () => {
+    const r = parseOdsay({
+      result: { path: [{ info: { totalTime: 44, payment: 1650, subwayTransitCount: 1, busTransitCount: 1 },
+        subPath: [
+          { trafficType: 3, sectionTime: 4, distance: 300 },                    // 도보
+          { trafficType: 1, sectionTime: 22, stationCount: 12, startName: '서울역', endName: '사당',
+            lane: [{ name: '수도권 4호선', subwayCode: 4 }] },
+          { trafficType: 3, sectionTime: 3 },                                   // 환승 도보
+          { trafficType: 2, sectionTime: 15, stationCount: 6, startName: '사당역', endName: '과천청사',
+            lane: [{ busNo: '11-3', type: 11, busID: 999 }] },
+        ] }] },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.value.legs.length, 2, '도보가 섞여 들어왔다');
+    assert.deepEqual(r.value.legs[0],
+      { mode: 'subway', name: '수도권 4호선', code: 4, type: null, from: '서울역', to: '사당', stops: 12, min: 22 });
+    assert.deepEqual(r.value.legs[1],
+      { mode: 'bus', name: '11-3', code: null, type: 11, from: '사당역', to: '과천청사', stops: 6, min: 15 });
+    // 환승 수는 그림과 같은 데서 나와야 한다 — 레그 2개면 환승 1회
+    assert.equal(r.value.transfers, 1);
+  });
+
+  test('subPath 가 없으면 레그는 null 이고 환승은 info 로 센다', () => {
+    const r = parseOdsay({
+      result: { path: [{ info: { totalTime: 40, payment: 1650, subwayTransitCount: 2, busTransitCount: 1 } }] },
+    });
+    assert.equal(r.value.legs, null);
+    assert.equal(r.value.transfers, 2);
   });
 });
 
@@ -259,8 +291,8 @@ describe('캐시', () => {
 
     const first = await r.lookupPair(a, b);
     const second = await r.lookupPair(a, b);
-    // 캐시가 담는 것과 신선 응답의 모양이 같아야 한다 (시간·요금·환승)
-    assert.deepEqual(first, { minutes: 28, fare: 1550, transfers: null });
+    // 캐시가 담는 것과 신선 응답의 모양이 같아야 한다 (시간·요금·환승·경로)
+    assert.deepEqual(first, { minutes: 28, fare: 1550, transfers: null, legs: null });
     assert.deepEqual(second, first, '캐시 히트와 신선 응답의 모양이 다르다');
     assert.equal(calls.length, 1, 'API 를 두 번 불렀다');
     assert.equal(r.stats.cacheHits, 1);
@@ -283,6 +315,41 @@ describe('캐시', () => {
     const cached = await r.lookupPair(a, b);
     assert.deepEqual(cached, fresh, '캐시에서 환승 수가 빠졌다');
     assert.equal(calls.length, 1);
+  });
+
+  test('경로 레그도 캐시를 타고 그대로 돌아온다', async () => {
+    /* 시간을 잰 그 경로를 화면에 그리려면 레그가 캐시에도 남아야 한다.
+       캐시 히트에서 레그가 빠지면, 캐시가 차오른 뒤부터 화면이 조용히
+       지하철 그래프 경로로 되돌아가 요약의 환승 수와 어긋난다. */
+    mockFetch(() => jsonRes({
+      result: { path: [{ info: { totalTime: 44, payment: 1650, subwayTransitCount: 1, busTransitCount: 1 },
+        subPath: [
+          { trafficType: 1, sectionTime: 22, stationCount: 12, startName: '서울역', endName: '사당',
+            lane: [{ name: '수도권 4호선', subwayCode: 4 }] },
+          { trafficType: 2, sectionTime: 15, stationCount: 6, startName: '사당역', endName: '과천청사',
+            lane: [{ busNo: '11-3', type: 11 }] },
+        ] }] },
+    }));
+    const store = memStore();
+    const r = mk(store);
+    const a = sid('서울역'), b = sid('사당');
+
+    const fresh = await r.lookupPair(a, b);
+    assert.equal(fresh.legs.length, 2);
+    assert.equal(fresh.transfers, 1);
+    const cached = await r.lookupPair(a, b);
+    assert.deepEqual(cached, fresh, '캐시에서 경로가 빠졌다');
+    assert.equal(calls.length, 1);
+
+    // 화면이 그릴 수 있게 우리 노선 키·색이 붙는다 (버스는 키가 없고 버스색으로)
+    const painted = r.decorateLegs(cached.legs);
+    assert.equal(painted[0].line, '4');
+    assert.equal(painted[0].lineName, G.lines['4'].name);
+    assert.equal(painted[0].color, G.lines['4'].color);
+    assert.equal(painted[1].mode, 'bus');
+    assert.equal(painted[1].line, null);
+    assert.equal(painted[1].lineName, '11-3');
+    assert.ok(painted[1].color, '버스 레그에도 색이 있어야 한다');
   });
 
   test('실패한 쌍은 캐시에 남기지 않는다', async () => {

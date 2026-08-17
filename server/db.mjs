@@ -153,30 +153,36 @@ class SqliteStore {
     ).run(meetingId, hash, json, routing ?? null);
   }
 
-  /* 환승 횟수는 나중에 추가했다. 화면에 "환승 N회" 로 나가는 값이라
-     그래프 짐작이 아니라 실제 경로 값을 써야 해서 캐시에도 같이 담는다. */
+  /* 환승 횟수·경로 레그는 나중에 추가했다. 화면에 "환승 N회" 와 경로 그림으로 나가는 값이라
+     그래프 짐작이 아니라 실제 경로 값을 써야 해서 캐시에도 같이 담는다.
+     legs 는 JSON 문자열이다 (탑승 구간 배열 — 캐시가 채워지기 전 행에는 없다). */
   migrateRouteTransfers() {
     const cols = this.db.prepare('PRAGMA table_info(route_cache)').all();
     if (!cols.some((c) => c.name === 'transfers')) {
       this.db.exec('ALTER TABLE route_cache ADD COLUMN transfers INTEGER');
     }
+    if (!cols.some((c) => c.name === 'legs')) {
+      this.db.exec('ALTER TABLE route_cache ADD COLUMN legs TEXT');
+    }
   }
 
   async getRouteCache(fromId, toId, ttlDays) {
     return this.db.prepare(
-      `SELECT minutes, fare, transfers FROM route_cache
+      `SELECT minutes, fare, transfers, legs FROM route_cache
        WHERE from_id = ? AND to_id = ?
          AND julianday('now') - julianday(updated_at) < ?`,
     ).get(fromId, toId, ttlDays) ?? null;
   }
 
-  async putRouteCache(fromId, toId, minutes, fare, transfers) {
+  async putRouteCache(fromId, toId, minutes, fare, transfers, legs) {
     this.db.prepare(
-      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers, legs) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(from_id, to_id) DO UPDATE SET
          minutes = excluded.minutes, fare = excluded.fare, transfers = excluded.transfers,
+         legs = excluded.legs,
          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-    ).run(fromId, toId, minutes, fare ?? null, Number.isFinite(transfers) ? transfers : null);
+    ).run(fromId, toId, minutes, fare ?? null,
+      Number.isFinite(transfers) ? transfers : null, legs ?? null);
   }
 
   async getRouteCacheCount() {
@@ -379,6 +385,8 @@ class PostgresStore {
     await this.pool.query(`
       ALTER TABLE events ADD COLUMN IF NOT EXISTS client_key text;
       ALTER TABLE route_cache ADD COLUMN IF NOT EXISTS transfers integer;
+      -- 실제 경로의 탑승 구간(JSON). 시간을 잰 그 경로를 그대로 그리려고 같이 담는다.
+      ALTER TABLE route_cache ADD COLUMN IF NOT EXISTS legs text;
       CREATE UNIQUE INDEX IF NOT EXISTS events_feedback_once
         ON events(meeting_id, client_key) WHERE event = 'result_feedback';
     `);
@@ -444,20 +452,22 @@ class PostgresStore {
 
   async getRouteCache(fromId, toId, ttlDays) {
     const { rows } = await this.pool.query(
-      `SELECT minutes, fare, transfers FROM route_cache
+      `SELECT minutes, fare, transfers, legs FROM route_cache
        WHERE from_id = $1 AND to_id = $2 AND updated_at > now() - ($3 || ' days')::interval`,
       [fromId, toId, String(ttlDays)],
     );
     return rows[0] ?? null;
   }
 
-  async putRouteCache(fromId, toId, minutes, fare, transfers) {
+  async putRouteCache(fromId, toId, minutes, fare, transfers, legs) {
     await this.pool.query(
-      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers) VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO route_cache (from_id, to_id, minutes, fare, transfers, legs)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (from_id, to_id)
        DO UPDATE SET minutes = EXCLUDED.minutes, fare = EXCLUDED.fare,
-                     transfers = EXCLUDED.transfers, updated_at = now()`,
-      [fromId, toId, minutes, fare ?? null, Number.isFinite(transfers) ? transfers : null],
+                     transfers = EXCLUDED.transfers, legs = EXCLUDED.legs, updated_at = now()`,
+      [fromId, toId, minutes, fare ?? null,
+        Number.isFinite(transfers) ? transfers : null, legs ?? null],
     );
   }
 

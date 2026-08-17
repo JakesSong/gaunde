@@ -55,6 +55,14 @@ export class OdsayRouter extends GraphRouter {
       trimmed: raw.length !== String(apiKey ?? '').length,
     };
 
+    /* ODsay 노선 이름 → 우리 노선 키. 이름은 그래프를 다시 빌드해도 잘 안 바뀌므로
+       id 보다 안전한 열쇠다. 키 자체(공항철도 등)도 같이 넣어 둔다. */
+    this.lineNameIndex = new Map();
+    for (const [key, meta] of Object.entries(graph.lines || {})) {
+      this.lineNameIndex.set(normLine(meta?.name), key);
+      this.lineNameIndex.set(normLine(key), key);
+    }
+
     this.stats = { calls: 0, ok: 0, failed: 0, cacheHits: 0, throttled: 0, failStreak: 0, lastError: null, lastBody: null };
     this.liveOk = false;    // ODsay 에서 온 값이 실제로 쓰이고 있는가
     this.nextSlot = 0;      // 다음 호출을 보낼 수 있는 가장 이른 시각 (전체 공유)
@@ -145,6 +153,43 @@ export class OdsayRouter extends GraphRouter {
     this.interval = Math.max(this.baseInterval, Math.round(this.interval * 0.8));
   }
 
+  /** ODsay 노선 이름을 우리 노선 키로. 못 찾으면 null (색 없이 이름만 나간다) */
+  lineKeyFor(leg) {
+    /* 1~9호선은 코드가 곧 우리 키다. 이름이 "수도권 1호선" 처럼 와도 이쪽에서 잡힌다. */
+    const code = leg?.code;
+    if (Number.isInteger(code) && code >= 1 && code <= 9 && this.graph.lines[String(code)]) {
+      return String(code);
+    }
+    const n = normLine(leg?.name);
+    if (!n) return null;
+    const key = this.lineNameIndex.get(n) ?? LINE_ALIAS[n] ?? null;
+    return key && this.graph.lines[key] ? key : null;
+  }
+
+  /**
+   * 캐시·응답에서 꺼낸 레그에 화면이 쓸 값(노선 키·표시 이름·색)을 붙인다.
+   * 그래프 경로의 leg 와 같은 모양으로 맞춘다 — 화면이 둘을 구분하지 않고 그릴 수 있게.
+   */
+  decorateLegs(legs) {
+    const list = decodeLegs(legs);
+    if (!list) return null;
+    return list.map((l) => {
+      const bus = l?.mode === 'bus';
+      const key = bus ? null : this.lineKeyFor(l);
+      const meta = key ? this.graph.lines[key] : null;
+      return {
+        mode: bus ? 'bus' : 'subway',
+        line: key,
+        lineName: meta?.name || l?.name || (bus ? '버스' : '지하철'),
+        color: meta?.color || (bus ? (BUS_COLORS[l?.type] || BUS_DEFAULT) : null),
+        from: l?.from ?? '',
+        to: l?.to ?? '',
+        stops: Number.isFinite(l?.stops) && l.stops > 0 ? l.stops : 1,
+        min: Number.isFinite(l?.min) ? l.min : null,
+      };
+    });
+  }
+
   /** 키가 살아 있는지 한 쌍만 확인 (결과는 캐시에 남아 재사용된다) */
   async probe() {
     const a = this.graph.findStations('서울역')[0];
@@ -157,26 +202,36 @@ export class OdsayRouter extends GraphRouter {
   /**
    * 역쌍 하나. 캐시 우선, 없으면 API. 실패하면 null.
    *
-   * 돌려주는 모양은 항상 {minutes, fare} 다.
-   * route_cache 는 시간·요금만 담으므로 pathType 은 캐시에서 살아 돌아오지 않는다.
+   * 돌려주는 모양은 항상 {minutes, fare, transfers, legs} 다.
+   * route_cache 가 담지 않는 값(pathType)은 캐시에서 살아 돌아오지 않는다.
    * 신선한 응답일 때만 있는 필드를 섞어 내보내면, 캐시가 차오른 뒤에야
    * 조용히 동작이 달라진다. 그래서 여기서 모양을 맞춰 내보낸다.
+   *
+   * legs 는 캐시에 늦게 추가한 열이라 예전 행에는 없다(null). 그때는 화면이
+   * 지하철 그래프 경로로 되돌아간다 — 캐시 수명(7일)이 지나면 저절로 채워진다.
    */
   async lookupPair(fromId, toId) {
     const cached = await this.store.getRouteCache(fromId, toId, ODSAY.cacheTtlDays);
     if (cached) {
       this.stats.cacheHits++;
       this.liveOk = true;
-      return { minutes: cached.minutes, fare: cached.fare, transfers: cached.transfers ?? null };
+      return {
+        minutes: cached.minutes, fare: cached.fare,
+        transfers: cached.transfers ?? null, legs: decodeLegs(cached.legs),
+      };
     }
     const fresh = await this.fetchPair(fromId, toId);
     if (!fresh) return null;
     try {
-      await this.store.putRouteCache(fromId, toId, fresh.minutes, fresh.fare, fresh.transfers);
+      await this.store.putRouteCache(
+        fromId, toId, fresh.minutes, fresh.fare, fresh.transfers, encodeLegs(fresh.legs));
     } catch (e) {
       console.error('[odsay] 캐시 저장 실패:', e.message);
     }
-    return { minutes: fresh.minutes, fare: fresh.fare, transfers: fresh.transfers ?? null };
+    return {
+      minutes: fresh.minutes, fare: fresh.fare,
+      transfers: fresh.transfers ?? null, legs: fresh.legs ?? null,
+    };
   }
 
   /**
@@ -312,7 +367,10 @@ export class OdsayRouter extends GraphRouter {
       const cached = await this.store.getRouteCache(p.from, p.to, ODSAY.cacheTtlDays);
       if (cached) {
         this.stats.cacheHits++; this.liveOk = true;
-        table.set(key, { minutes: cached.minutes, fare: cached.fare, transfers: cached.transfers ?? null });
+        table.set(key, {
+          minutes: cached.minutes, fare: cached.fare,
+          transfers: cached.transfers ?? null, legs: decodeLegs(cached.legs),
+        });
         return;
       }
       if (budget <= 0) return;                    // 예산 초과분은 그래프 값으로 둔다
@@ -320,7 +378,10 @@ export class OdsayRouter extends GraphRouter {
       const fresh = await this.fetchPair(p.from, p.to);
       if (!fresh) return;
       table.set(key, fresh);
-      try { await this.store.putRouteCache(p.from, p.to, fresh.minutes, fresh.fare, fresh.transfers); } catch { /* 캐시는 실패해도 그만 */ }
+      try {
+        await this.store.putRouteCache(
+          p.from, p.to, fresh.minutes, fresh.fare, fresh.transfers, encodeLegs(fresh.legs));
+      } catch { /* 캐시는 실패해도 그만 */ }
     });
 
     /* 하나도 못 받았으면 그래프 결과 그대로.
@@ -347,12 +408,18 @@ export class OdsayRouter extends GraphRouter {
         }
         const hit = table.get(`${r.originId}|${spot.station.id}`);
         if (!hit) return { ...r, timeSource: 'graph' };
+        /* 시간을 잰 그 경로를 그대로 그린다. 예전에는 시간만 ODsay 값으로 덮고
+           그림은 지하철 그래프의 최단 경로를 썼는데, 서로 다른 경로라
+           요약의 "환승 2회" 옆에서 그림이 4회를 그리는 일이 생겼다. */
+        const legs = this.decorateLegs(hit.legs);
         return {
           ...r,
           sec: Math.round(hit.minutes * 60),
           fare: Number.isFinite(hit.fare) && hit.fare > 0 ? hit.fare : r.fare,
           // 그래프가 짐작한 환승 횟수 대신 실제 경로의 값 (없으면 표시하지 않는다)
-          transfersOverride: Number.isFinite(hit.transfers) ? hit.transfers : null,
+          transfersOverride: legs ? legs.length - 1
+            : (Number.isFinite(hit.transfers) ? hit.transfers : null),
+          odsayLegs: legs,
           timeSource: 'odsay',
         };
       });
@@ -449,6 +516,53 @@ export class OdsayRouter extends GraphRouter {
   }
 }
 
+/* ------------------------------------------------------------------ 레그 색칠
+ *
+ * ODsay 는 노선 이름만 준다. 화면은 우리 노선 키(색·표시 이름)로 그리므로 이름을 맞춰 붙인다.
+ * 못 맞춘 노선은 키 없이 이름만 내보낸다 — 색이 없을 뿐 경로는 그대로 보인다.
+ */
+
+/** 이름 대조용 정규화. ODsay 는 "수도권 2호선", "수인분당선(왕십리)" 처럼 붙여 준다. */
+function normLine(s) {
+  return String(s ?? '').replace(/\(.*?\)/g, '').replace(/\s+/g, '').replace(/^수도권/, '');
+}
+
+/* 이름이 우리 표와 다르게 불리는 노선들 */
+const LINE_ALIAS = {
+  분당선: '수인분당', 수인선: '수인분당',
+  중앙선: '경의중앙', 경의선: '경의중앙',
+  김포도시철도: '김포골드', 김포골드선: '김포골드',
+  우이신설경전철: '우이신설',
+  에버라인: '용인', 용인에버라인: '용인', 용인경량전철: '용인',
+  공항철도1호선: '공항철도', 인천공항철도: '공항철도',
+  'GTX-A선': 'GTX-A', GTXA: 'GTX-A',
+};
+
+/* 버스 종류별 색 (ODsay lane.type). 서울 기준 간선 파랑·지선 초록·순환 노랑·광역 빨강.
+   모르는 종류는 간선색으로 둔다 — 버스라는 것만 구분되면 된다. */
+const BUS_COLORS = {
+  1: '#3D5BAB', 2: '#3D5BAB', 3: '#53B332', 4: '#E60012', 5: '#AA9872',
+  6: '#E60012', 10: '#53B332', 11: '#3D5BAB', 12: '#53B332', 13: '#F99D1C',
+  14: '#E60012', 15: '#E60012',
+};
+const BUS_DEFAULT = '#3D5BAB';
+
+/** 캐시에 넣을 문자열로 (없으면 null) */
+export function encodeLegs(legs) {
+  if (!Array.isArray(legs) || !legs.length) return null;
+  try { return JSON.stringify(legs); } catch { return null; }
+}
+
+/** 캐시에서 꺼낸 값을 배열로. 예전에 저장된 행에는 아예 없다(= null). */
+export function decodeLegs(raw) {
+  if (Array.isArray(raw)) return raw.length ? raw : null;
+  if (typeof raw !== 'string' || !raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) && v.length ? v : null;
+  } catch { return null; }
+}
+
 /* ------------------------------------------------------------------ 파싱 */
 
 /**
@@ -489,17 +603,64 @@ export function parseOdsay(body) {
 
   const fare = best.info.payment;
   /* 환승 횟수 = 탑승 구간 수 - 1. 화면에 "환승 N회" 로 나가는 값이라
-     그래프가 짐작한 값 대신 실제 경로의 값을 써야 한다. */
-  const legs = (Number(best.info.busTransitCount) || 0) + (Number(best.info.subwayTransitCount) || 0);
+     그래프가 짐작한 값 대신 실제 경로의 값을 써야 한다.
+     레그를 뽑았으면 그 개수로 센다 — 화면에 그리는 그림과 숫자가 같은 데서 나와야
+     "요약은 2회인데 그림은 4회" 같은 어긋남이 생기지 않는다. */
+  const legs = parseLegs(best);
+  const boarded = (Number(best.info.busTransitCount) || 0) + (Number(best.info.subwayTransitCount) || 0);
+  const transfers = legs.length ? legs.length - 1 : (boarded > 0 ? boarded - 1 : null);
   return {
     ok: true,
     value: {
       minutes: best.info.totalTime,
       fare: typeof fare === 'number' && Number.isFinite(fare) && fare >= 0 ? fare : null,
-      transfers: legs > 0 ? legs - 1 : null,
+      transfers,
+      legs: legs.length ? legs : null,
       pathType: best.pathType ?? best.info.pathType ?? null,
     },
   };
+}
+
+/**
+ * 실제 경로의 탑승 구간(subPath)을 뽑는다.
+ *
+ * trafficType 은 1=지하철, 2=버스, 3=도보다. 도보는 그리지 않는다 — 노선도 그림에
+ * 올릴 게 없고, 총 소요시간에는 이미 들어가 있다.
+ *
+ * 노선 색·우리 노선 키는 여기서 붙이지 않는다. 이 결과가 그대로 route_cache 에 들어가는데,
+ * 색 표를 고칠 때마다 캐시가 통째로 낡으면 곤란하다. 색은 꺼내 쓸 때(decorateLegs) 붙인다.
+ */
+export function parseLegs(path) {
+  const subs = Array.isArray(path?.subPath) ? path.subPath : [];
+  const out = [];
+  for (const sp of subs) {
+    const t = Number(sp?.trafficType);
+    if (t !== 1 && t !== 2) continue;                     // 도보(3)·미상은 건너뛴다
+    const lane = Array.isArray(sp.lane) ? sp.lane[0] : sp.lane;
+    const mode = t === 1 ? 'subway' : 'bus';
+    const name = mode === 'subway'
+      ? String(lane?.name ?? '').trim()
+      : String(lane?.busNo ?? lane?.name ?? '').trim();
+    const stops = Number(sp.stationCount);
+    const min = Number(sp.sectionTime);
+    out.push({
+      mode,
+      name: name || null,
+      // 지하철은 ODsay 노선코드, 버스는 노선 종류(색을 고르는 데 쓴다)
+      code: mode === 'subway' ? numOrNull(lane?.subwayCode) : null,
+      type: mode === 'bus' ? numOrNull(lane?.type) : null,
+      from: String(sp.startName ?? '').trim() || null,
+      to: String(sp.endName ?? '').trim() || null,
+      stops: Number.isFinite(stops) && stops > 0 ? stops : 1,
+      min: Number.isFinite(min) && min > 0 ? min : null,
+    });
+  }
+  return out;
+}
+
+function numOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** 응답을 로그에 남길 수 있는 짧은 문자열로 (순환참조·과대 응답 방어) */

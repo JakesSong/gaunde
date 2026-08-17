@@ -54,11 +54,15 @@ create index if not exists events_created on events(created_at);
 -- ODsay 어댑터를 붙였을 때 역쌍 길찾기 결과를 담아둔다.
 -- 역 좌표는 고정이라 오래 유효하고, 무료 티어 호출 한도를 이걸로 흡수한다.
 -- (아직 실제 호출은 하지 않으므로 지금은 항상 비어 있다)
+-- transfers/legs 는 화면에 그대로 나가는 값이다. 시간을 잰 그 경로의 환승 횟수와
+-- 탑승 구간(JSON)을 같이 담아야 요약 숫자와 경로 그림이 어긋나지 않는다.
 create table if not exists route_cache (
   from_id    integer not null,
   to_id      integer not null,
   minutes    real not null,
   fare       integer,
+  transfers  integer,
+  legs       text,
   updated_at timestamptz not null default now(),
   primary key (from_id, to_id)
 );

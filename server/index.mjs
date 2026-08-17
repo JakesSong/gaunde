@@ -115,7 +115,7 @@ async function track(event, meeting, meta) {
 const RESULT_CACHE_TTL_DAYS = 7;
 /* 응답 모양이 바뀌면 옛 스냅샷은 새 화면과 맞지 않는다(후보 개수·환승 필드 등).
    모양을 바꿀 때마다 올려서 캐시를 통째로 무효화한다. */
-const RESULT_SHAPE_REV = 4;
+const RESULT_SHAPE_REV = 5;
 const graphFingerprint = graph.meta.generatedAt || '';
 const resultCacheStats = { hits: 0, misses: 0 };
 
@@ -343,6 +343,14 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
   const shapeSpot = (spot) => {
     const routes = spot.routes.map((r, i) => {
       const timeSource = r.timeSource ?? 'graph';
+      /* 시간을 잰 그 경로(ODsay 실제 경로)를 같이 내려보낸다. 화면은 이게 있으면 이걸 그리고,
+         없으면(예전 캐시 행·그래프 경로) 아래 legs 로 되돌아간다. */
+      const odsayLegs = timeSource === 'odsay' && Array.isArray(r.odsayLegs) && r.odsayLegs.length
+        ? r.odsayLegs.map((l) => ({
+          mode: l.mode, line: l.line, lineName: l.lineName, color: l.color,
+          from: l.from, to: l.to, stops: l.stops, min: l.min,
+        }))
+        : null;
       return {
         participantId: participants[i].id,
         name: participants[i].name,
@@ -365,6 +373,7 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
           line: l.line, lineName: l.lineName, color: l.color,
           from: l.from, to: l.to, stops: l.stops, estimated: !!l.hasEstimate,
         })),
+        ...(odsayLegs ? { odsayLegs } : {}),
       };
     }).sort((a, b) => b.min - a.min);
 
