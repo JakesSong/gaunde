@@ -667,8 +667,13 @@
       var k = r.originId;
       if (byStation[k] === undefined) {
         byStation[k] = groups.length;
+        /* 시간을 잰 그 경로를 그린다. ODsay 실제 경로가 오면 그걸 쓰고(버스 포함),
+           없을 때만 지하철 그래프의 최단 경로로 되돌아간다. 이래야 요약의
+           "환승 N회" 와 펼친 경로의 환승 수가 같은 경로에서 나온다. */
+        var live = r.odsayLegs && r.odsayLegs.length ? r.odsayLegs : null;
         groups.push({ names: [r.name], origin: r.origin, min: r.min, fare: r.fare,
-          legs: r.legs || [], transfers: r.transfers, timeSource: r.timeSource, route: r });
+          legs: live || r.legs || [], legsLive: !!live,
+          transfers: r.transfers, timeSource: r.timeSource, route: r });
       } else {
         groups[byStation[k]].names.push(r.name);
       }
@@ -769,9 +774,13 @@
       '지도 위 거리·방향과는 무관합니다';
     $('raxis').hidden = false;
 
+    /* 범례는 노선도에 있는 호선만 담는다. ODsay 실제 경로에는 버스 구간이 섞이는데,
+       버스에는 우리 노선 키가 없어서 여기 넣으면 빈 칩이 하나 생긴다. */
     var seenLines = [];
     groups.forEach(function (g) {
-      g.legs.forEach(function (l) { if (seenLines.indexOf(l.line) < 0) seenLines.push(l.line); });
+      g.legs.forEach(function (l) {
+        if (l.line && state.lines[l.line] && seenLines.indexOf(l.line) < 0) seenLines.push(l.line);
+      });
     });
     spot.station.lines.forEach(function (l) { if (seenLines.indexOf(l) < 0) seenLines.push(l); });
     var chips = seenLines.map(function (l) {
@@ -1035,9 +1044,9 @@
     var css = [];
     if (style.marginTop) css.push('margin-top:' + style.marginTop + 'px');
     if (style.marginBottom) css.push('margin-bottom:' + style.marginBottom + 'px');
-    /* ODsay 시간은 버스가 섞였을 수 있어 지하철 노선명을 붙이지 않는다.
-       기준은 상단 문구(실시간 대중교통 기준)가 이미 밝히고 있고,
-       한 줄로 줄이면 행 높이가 줄어 다이어그램도 짧아진다. */
+    /* 실시간 경로에는 버스 노선까지 들어 있어 한 줄에 다 적으면 행이 접혀 다이어그램이
+       길어진다. 노선 목록은 줄을 펼치면 그대로 나오므로 여기서는 접어 둔다.
+       기준은 상단 문구(실시간 대중교통 기준)가 이미 밝히고 있다. */
     var via = g.timeSource === 'odsay' ? '' : (uniq ? ' · ' + esc(uniq) : '');
     /* 환승을 0회일 때도 적는다. "환승 시간은 따진 거냐" 는 질문이 반복됐는데,
        아무 표기가 없으니 안 따진 것처럼 보인 탓이었다. */
@@ -1056,7 +1065,7 @@
     if (can) {
       peek = g.transfers && g.legs.length > 1
         ? ' · ' + esc(g.legs[0].to) + ' 환승'
-        : ' · ' + (g.legs[0].stops || 1) + '개 역';
+        : ' · ' + (g.legs[0].stops || 1) + (g.legs[0].mode === 'bus' ? '정거장' : '개 역');
     }
     return '<div class="stop' + (can ? ' can' : '') + (far ? ' far' : '') + '" data-g="' + gi + '"' +
       (can ? ' tabindex="0" role="button" aria-expanded="false"' : '') +
@@ -1078,18 +1087,34 @@
     var legs = g.legs || [];
     if (!legs.length) return '';
     var rows = legs.map(function (l, i) {
-      var tf = i ? '<div class="tf">↕ ' + esc(legs[i - 1].to) + ' 에서 환승</div>' : '';
-      var c = safeColor(l.color) || '#B9C1B5';
-      return tf + '<div class="leg"><i style="--c:' + c + '"></i><div><b>' + esc(l.lineName) + '</b> · ' +
-        esc(l.from) + ' → ' + esc(l.to) + ' · ' + (l.stops || 1) + '개 역' +
+      var prev = legs[i - 1];
+      var tf = '';
+      if (prev) {
+        /* 환승 지점. 실제 경로에서는 내린 곳과 다음에 타는 곳이 다를 수 있다
+           (지하철에서 내려 조금 걸어가 버스를 타는 식). 다르면 둘 다 적는다. */
+        tf = prev.to && l.from && prev.to !== l.from
+          ? '<div class="tf">↕ ' + esc(prev.to) + ' → ' + esc(l.from) + ' 환승</div>'
+          : '<div class="tf">↕ ' + esc(prev.to || l.from) + ' 에서 환승</div>';
+      }
+      var bus = l.mode === 'bus';
+      var c = safeColor(l.color) || (bus ? '#3D5BAB' : '#B9C1B5');
+      /* 버스는 노선 이름만으로는 지하철과 구분이 안 된다(“470” 처럼 숫자만 오기도 한다).
+         칩 모양(네모)과 '버스' 접두어로 눈에 띄게 갈라 둔다. */
+      var label = bus ? '버스 ' + esc(l.lineName) : esc(l.lineName);
+      return tf + '<div class="leg' + (bus ? ' bus' : '') + '"><i style="--c:' + c + '"></i>' +
+        '<div><b>' + label + '</b> · ' + esc(l.from) + ' → ' + esc(l.to) +
+        ' · ' + (l.stops || 1) + (bus ? '정거장' : '개 역') +
         (l.estimated ? ' <span style="color:#7C857A">(추정 구간)</span>' : '') + '</div></div>';
     });
-    /* 시간과 경로의 출처가 다를 수 있다 — ODsay 는 시간·요금만 주고 버스 구간은
-       내려주지 않으므로, 아래 경로는 지하철 기준이라는 걸 밝혀야 거짓말이 안 된다. */
-    var cap = r.timeSource === 'odsay'
-      ? '시간은 실시간 대중교통 기준이고, 아래 경로는 지하철 기준 최단 경로예요 (버스 구간은 표시하지 않아요).'
-      : '각역정차 기준 · 대략 ±' + (r.marginMin || 0) + '분' +
-        (r.estimated ? ' · 추정 구간이 섞여 있어요' : '');
+    /* 무엇을 그린 건지 밝힌다.
+       ODsay 실제 경로면 시간·환승·그림이 모두 같은 경로에서 나온 값이다.
+       예전 캐시처럼 시간만 실시간이고 경로는 그래프인 경우가 아직 남아 있어 문구를 나눈다. */
+    var cap = g.legsLive
+      ? '실시간 대중교통 길찾기가 찾은 실제 경로예요 (환승 대기·도보 시간도 소요시간에 들어 있어요).'
+      : r.timeSource === 'odsay'
+        ? '시간은 실시간 대중교통 기준이고, 아래 경로는 지하철 기준 최단 경로예요 (버스 구간은 표시하지 않아요).'
+        : '각역정차 기준 · 대략 ±' + (r.marginMin || 0) + '분' +
+          (r.estimated ? ' · 추정 구간이 섞여 있어요' : '');
     return '<div class="legs">' + rows.join('') + '<span class="cap">' + cap + '</span></div>';
   }
 
