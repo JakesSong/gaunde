@@ -10,7 +10,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MetroGraph } from '../server/graph.mjs';
-import { OdsayRouter, parseOdsay, decodeIfEncoded, scrub } from '../server/routing/odsay-router.mjs';
+import {
+  OdsayRouter, parseOdsay, decodeIfEncoded, scrub,
+  pickVariants, pickRouteVariant, normalizeVariants, encodeLegs, decodeLegs,
+} from '../server/routing/odsay-router.mjs';
 import { GraphRouter } from '../server/routing/graph-router.mjs';
 import { createRouter } from '../server/routing/index.mjs';
 import { ODSAY } from '../server/config.mjs';
@@ -164,6 +167,127 @@ describe('ODsay 응답 파싱', () => {
   });
 });
 
+/* ============================================ 기준별 경로 3벌 (variants)
+ *
+ * ODsay 응답의 result.path 에는 이미 요금·환승이 다른 대안 경로가 들어 있다.
+ * 예전에는 가장 빠른 것 하나만 쓰고 버려서, 요금 기준에서도 그 사람 요금이 최소가
+ * 아니었다. 추가 호출 없이 같은 응답에서 세 벌을 뽑는지 본다.
+ */
+describe('기준별 경로 3벌', () => {
+  /** 지하철 레그 하나 */
+  const leg = (name, code, from, to, stops, min) => ({
+    trafficType: 1, sectionTime: min, stationCount: stops, startName: from, endName: to,
+    lane: [{ name, subwayCode: code }],
+  });
+  /* 빠르지만 비싼 경로 / 느리지만 싼 경로 / 중간이고 환승 0회인 경로 */
+  const THREE = {
+    result: {
+      path: [
+        { info: { totalTime: 30, payment: 2500 },
+          subPath: [leg('신분당선', 101, 'A', 'X', 5, 12), leg('수도권 2호선', 2, 'X', 'B', 8, 15)] },
+        { info: { totalTime: 38, payment: 1400 },
+          subPath: [leg('수도권 1호선', 1, 'A', 'Y', 9, 18), leg('수도권 2호선', 2, 'Y', 'Z', 7, 16),
+            leg('수도권 4호선', 4, 'Z', 'B', 2, 3)] },
+        { info: { totalTime: 35, payment: 1600 }, subPath: [leg('수도권 3호선', 3, 'A', 'B', 20, 33)] },
+      ],
+    },
+  };
+
+  test('대안 경로에서 시간·요금·환승 최소를 각각 뽑는다', () => {
+    const r = parseOdsay(THREE);
+    assert.equal(r.ok, true);
+    assert.equal(r.value.candidates, 3);
+
+    // 최상위는 예전 그대로 "가장 빠른 경로" — 이 자리를 읽던 코드가 안 깨져야 한다
+    assert.equal(r.value.minutes, 30);
+    assert.equal(r.value.fare, 2500);
+
+    const v = r.value.variants;
+    assert.equal(v.time.minutes, 30);
+    assert.equal(v.fare.fare, 1400, '요금 최소가 아니다');
+    assert.equal(v.fare.minutes, 38);
+    assert.equal(v.transfers.transfers, 0, '환승 최소가 아니다');
+    assert.equal(v.transfers.minutes, 35);
+  });
+
+  test('세 기준 모두 요약(환승수)과 그림(legs)이 같은 경로에서 나온다', () => {
+    // "요약은 환승 2회인데 그림은 4회" 가 다시 생기지 않게 하는 조건이다
+    const v = parseOdsay(THREE).value.variants;
+    for (const [mode, one] of Object.entries(v)) {
+      assert.equal(one.transfers, one.legs.length - 1, `${mode}: 요약과 그림이 다른 경로다`);
+    }
+    assert.equal(v.fare.legs.length, 3);
+    assert.equal(v.transfers.legs.length, 1);
+  });
+
+  test('목적함수가 같으면 빠른 경로를 준다', () => {
+    const tie = pickVariants([
+      { minutes: 50, fare: 1400, transfers: 1, legs: null },
+      { minutes: 33, fare: 1400, transfers: 1, legs: null },
+    ]);
+    assert.equal(tie.fare.minutes, 33);
+  });
+
+  test('요금·환승을 모르는 경로가 최소로 이기지는 않는다', () => {
+    // payment 가 없다고 "0원" 으로 읽히면 그 경로가 늘 요금 기준 1등이 된다
+    const v = pickVariants([
+      { minutes: 40, fare: null, transfers: null, legs: null },
+      { minutes: 45, fare: 1500, transfers: 2, legs: null },
+    ]);
+    assert.equal(v.fare.fare, 1500);
+    assert.equal(v.transfers.transfers, 2);
+  });
+
+  test('후보가 하나뿐이면 세 벌이 같은 경로다', () => {
+    const v = parseOdsay(okBody(22, 1550)).value.variants;
+    assert.equal(v.fare.minutes, 22);
+    assert.equal(v.transfers.minutes, 22);
+  });
+
+  test('캐시 블롭을 왕복해도 3벌이 그대로다', () => {
+    const src = parseOdsay(THREE).value.variants;
+    const back = decodeLegs(encodeLegs(src));
+    assert.deepEqual(back, normalizeVariants(src));
+    assert.equal(back.fare.fare, 1400);
+    assert.equal(back.transfers.legs.length, 1);
+  });
+
+  test('깨진 블롭은 캐시 없음으로 본다', () => {
+    for (const bad of [null, undefined, '', 'not json', '{}', '[]', 5, {}]) {
+      assert.equal(decodeLegs(bad), null, `decodeLegs(${JSON.stringify(bad)})`);
+      assert.equal(encodeLegs(bad), null, `encodeLegs(${JSON.stringify(bad)})`);
+    }
+  });
+
+  describe('개인 경로 재선택 규칙', () => {
+    const nv = () => normalizeVariants(parseOdsay(THREE).value.variants);
+
+    test('시간 여유 안이면 그 기준의 경로를 쓴다', () => {
+      const v = nv();
+      assert.equal(pickRouteVariant(v, 'fare', 10 * 60).fare, 1400);
+      assert.equal(pickRouteVariant(v, 'transfers', 10 * 60).transfers, 0);
+      assert.equal(pickRouteVariant(v, 'time', 10 * 60).minutes, 30);
+    });
+
+    test('여유를 넘으면 그 사람만 시간 최소로 되돌린다', () => {
+      /* 순수 최소화는 답이 무너진다 — 200원 아끼려고 40분 더 걸리는 경로는 아무도 안 간다.
+         지하철 그래프(scoreForMode)와 같은 규칙·같은 여유값을 쓴다. */
+      const v = nv();
+      const tight = pickRouteVariant(v, 'fare', 5 * 60);          // 38 > 30+5
+      assert.equal(tight.minutes, 30);
+      assert.equal(tight.fare, 2500);
+      assert.equal(pickRouteVariant(v, 'transfers', 5 * 60).minutes, 35);   // 35 = 30+5, 경계는 포함
+      assert.equal(pickRouteVariant(v, 'transfers', 4 * 60).minutes, 30);
+    });
+
+    test('시간을 못 읽으면 null — 호출부가 그래프 값으로 남긴다', () => {
+      assert.equal(pickRouteVariant(null, 'fare', 600), null);
+      assert.equal(pickRouteVariant({ time: { minutes: null } }, 'fare', 600), null);
+      assert.equal(pickRouteVariant(nv(), 'nope', 600).minutes, 30, '모르는 기준은 시간 기준으로');
+    });
+  });
+});
+
 /* ============================================================ 키 취급 */
 describe('키 취급', () => {
   test('이미 인코딩된 키는 한 번 풀어 이중 인코딩을 막는다', () => {
@@ -292,7 +416,10 @@ describe('캐시', () => {
     const first = await r.lookupPair(a, b);
     const second = await r.lookupPair(a, b);
     // 캐시가 담는 것과 신선 응답의 모양이 같아야 한다 (시간·요금·환승·경로)
-    assert.deepEqual(first, { minutes: 28, fare: 1550, transfers: null, legs: null });
+    assert.deepEqual(
+      { minutes: first.minutes, fare: first.fare, transfers: first.transfers, legs: first.legs },
+      { minutes: 28, fare: 1550, transfers: null, legs: null });
+    assert.ok(first.variants, '기준별 3벌이 빠졌다');
     assert.deepEqual(second, first, '캐시 히트와 신선 응답의 모양이 다르다');
     assert.equal(calls.length, 1, 'API 를 두 번 불렀다');
     assert.equal(r.stats.cacheHits, 1);
@@ -350,6 +477,30 @@ describe('캐시', () => {
     assert.equal(painted[1].line, null);
     assert.equal(painted[1].lineName, '11-3');
     assert.ok(painted[1].color, '버스 레그에도 색이 있어야 한다');
+  });
+
+  test('기준별 3벌도 캐시를 타고 그대로 돌아온다', async () => {
+    /* 3벌이 캐시에서 빠지면, 캐시가 차오른 뒤부터 요금 기준이 조용히
+       "가장 빠른 경로" 로 되돌아간다 — 고치기 전과 똑같은 상태가 된다. */
+    mockFetch(() => jsonRes({
+      result: { path: [
+        { info: { totalTime: 30, payment: 2500 },
+          subPath: [{ trafficType: 1, sectionTime: 30, stationCount: 10, startName: 'A', endName: 'B',
+            lane: [{ name: '신분당선', subwayCode: 101 }] }] },
+        { info: { totalTime: 36, payment: 1400 },
+          subPath: [{ trafficType: 1, sectionTime: 36, stationCount: 18, startName: 'A', endName: 'B',
+            lane: [{ name: '수도권 2호선', subwayCode: 2 }] }] },
+      ] },
+    }));
+    const store = memStore();
+    const r = mk(store);
+    const a = sid('서울역'), b = sid('강남');
+
+    const fresh = await r.lookupPair(a, b);
+    assert.equal(fresh.variants.fare.fare, 1400);
+    const cached = await r.lookupPair(a, b);
+    assert.deepEqual(cached, fresh, '캐시에서 기준별 3벌이 빠졌다');
+    assert.equal(calls.length, 1);
   });
 
   test('실패한 쌍은 캐시에 남기지 않는다', async () => {
@@ -451,6 +602,61 @@ describe('중간지점 계산', () => {
     assert.equal(out.best.maxSec, Math.max(...out.best.routes.map((x) => x.sec)));
     assert.equal(out.best.sumSec, out.best.routes.reduce((a, x) => a + x.sec, 0));
     assert.equal(out.best.fareTotal, out.best.routes.reduce((a, x) => a + x.fare, 0));
+  });
+
+  test('요금 기준에서는 개인 경로도 요금 최소로 바뀐다', async () => {
+    /* 예전에는 기준을 바꿔도 ODsay 로 답한 사람의 경로는 늘 "가장 빠른" 것이었다.
+       같은 응답 안에 더 싼 대안이 있는데도 요금 기준의 요금이 최소가 아니었다.
+       시간 기준은 그대로 가장 빠른 경로여야 한다. */
+    mockFetch(() => jsonRes({
+      result: { path: [
+        { info: { totalTime: 24, payment: 2500 },
+          subPath: [{ trafficType: 1, sectionTime: 24, stationCount: 9, startName: 'A', endName: 'B',
+            lane: [{ name: '신분당선', subwayCode: 101 }] }] },
+        // 6분 더 걸리지만 1,100원 싸고 환승도 없다 (여유 10분 안이라 채택되어야 한다)
+        { info: { totalTime: 30, payment: 1400 },
+          subPath: [{ trafficType: 1, sectionTime: 30, stationCount: 16, startName: 'A', endName: 'B',
+            lane: [{ name: '수도권 2호선', subwayCode: 2 }] }] },
+      ] },
+    }));
+    const out = await mk().findMeetingPoint(origins(), { topN: 3, modes: ['time', 'fare'] });
+
+    const moved = (m) => out.modes[m].best.routes.filter((x) => x.timeSource === 'odsay');
+    assert.ok(moved('time').length > 0 && moved('fare').length > 0, 'ODsay 로 채워진 경로가 없다');
+
+    for (const x of moved('time')) {
+      assert.equal(x.sec, 24 * 60, '시간 기준은 가장 빠른 경로 그대로여야 한다');
+      assert.equal(x.fare, 2500);
+    }
+    for (const x of moved('fare')) {
+      assert.equal(x.fare, 1400, '요금 기준인데 요금이 최소가 아니다');
+      // 시간·환승·그림도 그 경로의 값이어야 한다 (요약과 그림이 어긋나면 안 된다)
+      assert.equal(x.sec, 30 * 60);
+      assert.equal(x.transfersOverride, 0);
+      assert.equal(x.odsayLegs.length, 1);
+      assert.equal(x.odsayLegs[0].line, '2');
+    }
+    assert.equal(out.modes.fare.selection.routeBasis, 'fare');
+    assert.equal(out.modes.time.selection.routeBasis, 'time');
+  });
+
+  test('요금 경로가 너무 느리면 그 사람만 시간 최소로 남는다', async () => {
+    // 300원 아끼려고 40분을 더 쓰는 경로는 아무도 안 간다 — 여유(10분)를 넘으면 되돌린다
+    mockFetch(() => jsonRes({
+      result: { path: [
+        { info: { totalTime: 20, payment: 1600 },
+          subPath: [{ trafficType: 1, sectionTime: 20, stationCount: 8, startName: 'A', endName: 'B',
+            lane: [{ name: '수도권 2호선', subwayCode: 2 }] }] },
+        { info: { totalTime: 60, payment: 1300 },
+          subPath: [{ trafficType: 2, sectionTime: 60, stationCount: 30, startName: 'A', endName: 'B',
+            lane: [{ busNo: '741', type: 11 }] }] },
+      ] },
+    }));
+    const out = await mk().findMeetingPoint(origins(), { topN: 3, modes: ['time', 'fare'] });
+    for (const x of out.modes.fare.best.routes.filter((r) => r.timeSource === 'odsay')) {
+      assert.equal(x.sec, 20 * 60, '여유를 넘는 느린 경로를 골랐다');
+      assert.equal(x.fare, 1600);
+    }
   });
 
   test('ODsay 가 전부 실패해도 그래프 결과를 낸다', async () => {
