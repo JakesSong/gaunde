@@ -16,7 +16,8 @@
 
 import {
   TOLERANCE_MIN, TOLERANCE_MAX_MIN, toleranceMinFor, HUB_MIN_LINES, EXTRA_HUB_NAMES,
-  DIVERSIFY_CANDIDATES, MODES, DEFAULT_MODE, MODE_SLACK_MIN,
+  DIVERSIFY_CANDIDATES, DIVERSIFY_MIN_GAP_KM, MODES, DEFAULT_MODE,
+  MODE_SLACK_MIN, MODE_ROUTE_SLACK_MIN,
 } from './config.mjs';
 import { fareFor, surchargeLines } from './fare.mjs';
 
@@ -161,18 +162,31 @@ export class MetroGraph {
   }
 
   /**
-   * 출발역에서 모든 역까지의 소요시간(초).
-   * @returns {{time:Int32Array, prev:Int32Array, prevEdge:Array}} time 은 역 id 색인
+   * 출발역에서 모든 역까지의 최적 경로.
+   *
+   * 기본은 소요시간 최소다. opts.extraCost 를 주면 간선마다 추가 비용이 붙어
+   * "그 기준을 먼저 최소로 하고, 같으면 빠른 쪽" 으로 답이 바뀐다 (extraCostFor 참고).
+   * 그래도 stationTime 에는 언제나 진짜 소요시간이 담긴다 — 화면에 나가는 건 그 값이다.
+   *
+   * @param {number} originStationId
+   * @param {object} [opts]
+   * @param {(edge:object)=>number} [opts.extraCost] 간선의 추가 비용(초 환산). 승차 시작은
+   *   {kind:'board', line} 으로 한 번 불린다.
+   * @returns {{dist:Int32Array, prev:Int32Array, prevEdge:Array, stationTime:Int32Array, stationNode:Int32Array}}
    */
-  dijkstra(originStationId) {
+  dijkstra(originStationId, opts = {}) {
     const INF = 0x7fffffff;
-    const dist = new Int32Array(this.nodeCount).fill(INF);
+    const extraCost = typeof opts.extraCost === 'function' ? opts.extraCost : null;
+    const dist = new Int32Array(this.nodeCount).fill(INF);   // 줄 세우는 비용
+    const time = new Int32Array(this.nodeCount).fill(INF);   // 진짜 소요시간
     const prev = new Int32Array(this.nodeCount).fill(-1);
     const prevEdge = new Array(this.nodeCount).fill(null);
     const heap = new MinHeap();
 
     for (const u of this.stationNodes.get(originStationId) || []) {
-      dist[u] = this.waitSec(this.nodeLine[u]);   // 최초 승강장 대기
+      const wait = this.waitSec(this.nodeLine[u]);            // 최초 승강장 대기
+      time[u] = wait;
+      dist[u] = wait + (extraCost ? extraCost({ kind: 'board', line: this.nodeLine[u] }) : 0);
       heap.push(dist[u], u);
     }
 
@@ -180,24 +194,31 @@ export class MetroGraph {
       const [d, u] = heap.pop();
       if (d > dist[u]) continue;
       for (const e of this.adj[u]) {
-        const nd = d + e.cost;
+        const nd = d + e.cost + (extraCost ? extraCost(e) : 0);
         if (nd < dist[e.to]) {
-          dist[e.to] = nd; prev[e.to] = u; prevEdge[e.to] = e;
+          dist[e.to] = nd; time[e.to] = time[u] + e.cost;
+          prev[e.to] = u; prevEdge[e.to] = e;
           heap.push(nd, e.to);
         }
       }
     }
 
-    /* 역 단위로 접기: 그 역의 승강장 중 최소값, 마지막 dwell 1회 차감 */
+    /* 역 단위로 접기: 그 역의 승강장 중 비용이 가장 낮은 것, 마지막 dwell 1회 차감.
+       비용이 같으면 빠른 쪽. (기본 모드에서는 비용 = 시간이라 예전과 정확히 같다) */
     const stationTime = new Int32Array(this.stations.length).fill(INF);
     const stationNode = new Int32Array(this.stations.length).fill(-1);
+    const stationCost = new Float64Array(this.stations.length).fill(Infinity);
     for (let u = 0; u < this.nodeCount; u++) {
       if (dist[u] === INF) continue;
       const s = this.nodeStation[u];
-      const t = s === originStationId ? 0 : Math.max(0, dist[u] - this.dwell);
-      if (t < stationTime[s]) { stationTime[s] = t; stationNode[s] = u; }
+      const isOrigin = s === originStationId;
+      const c = isOrigin ? 0 : dist[u];
+      const t = isOrigin ? 0 : Math.max(0, time[u] - this.dwell);
+      if (c < stationCost[s] || (c === stationCost[s] && t < stationTime[s])) {
+        stationCost[s] = c; stationTime[s] = t; stationNode[s] = u;
+      }
     }
-    return { dist, prev, prevEdge, stationTime, stationNode };
+    return { dist, prev, prevEdge, stationTime, stationNode, stationCost };
   }
 
   /** 경로 복원 — 노선별 구간으로 묶어서 돌려준다 */
@@ -291,6 +312,48 @@ export class MetroGraph {
   }
 
   /**
+   * 한 기준에서 후보를 채점한다 — 참여자 경로도 그 기준으로 다시 뽑는다.
+   *
+   * 예전에는 기준을 바꿔도 "어디서 만날지" 만 바뀌고 각자의 경로는 늘 시간 최소였다.
+   * 그래서 요금 기준인데 신분당선(별도운임 1,000원)을 타는 경로가 그대로 남았다.
+   *
+   * 다만 순수 최소화는 여기서도 답이 무너진다 — 환승 0회 90분이 환승 1회 30분을 이기면
+   * 아무도 그렇게 안 간다. 그래서 후보 선택과 같은 규칙을 쓴다: 그 사람의 최단 시간
+   * + slackSec 안에 드는 경우에만 기준 경로를 쓰고, 넘으면 그 사람만 시간 최소로 되돌린다.
+   * 되돌린 사람이 섞일 수 있으므로 어느 경로표를 썼는지 entry.results 에 담아 둔다.
+   *
+   * maxSec·sumSec 은 이렇게 고른 "실제로 갈 경로" 의 시간이다. 요금 기준에서 더 싼 대신
+   * 조금 느린 경로를 골랐다면 화면의 시간도 그 값이어야 한다.
+   */
+  scoreForMode(candidateIds, timeResults, modeResults, originIds, slackSec) {
+    const INF = 0x7fffffff;
+    const n = originIds.length;
+    const out = [];
+    for (const c of candidateIds) {
+      const picked = new Array(n);
+      let ok = true, max = 0, sum = 0;
+      for (let i = 0; i < n; i++) {
+        const tt = timeResults[i].stationTime[c];
+        if (tt >= INF) { ok = false; break; }               // 한 명이라도 못 가면 후보에서 뺀다
+        const tm = modeResults[i].stationTime[c];
+        const useMode = tm < INF && tm <= tt + slackSec;
+        picked[i] = useMode ? modeResults[i] : timeResults[i];
+        const t = useMode ? tm : tt;
+        if (t > max) max = t;
+        sum += t;
+      }
+      if (!ok) continue;
+      const entry = {
+        stationId: c, maxSec: max, sumSec: sum, paths: null, results: picked,
+        fareTotal: 0, fareMax: 0, fares: null, transfersTotal: 0, transfersMax: 0,
+      };
+      this.fillRoutes(entry, picked, originIds);
+      out.push(entry);
+    }
+    return out;
+  }
+
+  /**
    * 중간지점 선택.
    *
    * 순수 minimax 는 1분 차이로 순위가 뒤집혀 가까운 사람이 괜히 더 멀리 나가거나
@@ -336,10 +399,12 @@ export class MetroGraph {
     const uniqOrigins = [...new Set(originIds)];
     const originsNotHub = uniqOrigins.filter((id) => !hubSet.has(id)).length;
     const defaultCandidates = [...new Set([...this.hubIds, ...originIds])];
-    let scored = this.scoreCandidates(opts.candidates ?? defaultCandidates, results);
+    let candidateIds = opts.candidates ?? defaultCandidates;
+    let scored = this.scoreCandidates(candidateIds, results);
     if (!scored.length) {
       usedFallback = true;
-      scored = this.scoreCandidates(this.stations.map((s) => s.id), results);
+      candidateIds = this.stations.map((s) => s.id);
+      scored = this.scoreCandidates(candidateIds, results);
     }
     if (!scored.length) return null;
 
@@ -356,12 +421,32 @@ export class MetroGraph {
     const timeBand = scored.filter((s) => s.maxSec <= minMax + toleranceSec);
     for (const c of (needsFullRoutes ? scored : timeBand)) this.fillRoutes(c, results, originIds);
 
+    /* 기준별 경로표.
+     *
+     * 요금·환승 기준에서는 각자의 경로도 그 기준으로 다시 뽑는다 (scoreForMode 참고).
+     * 다익스트라 한 번이 참여자당 1회씩 더 붙는데, 후보 130곳을 전부 채워도 4ms 인
+     * 계산이라 기준 두 개를 더 돌려도 화면에서 느낄 만한 값이 아니다. */
+    const routeSlackSec = Math.round((opts.modeRouteSlackMin ?? MODE_ROUTE_SLACK_MIN) * 60);
+    const scoredFor = { time: scored };
+    for (const mode of modes) {
+      if (scoredFor[mode]) continue;
+      const extraCost = extraCostFor(mode, this.lines);
+      if (!extraCost) { scoredFor[mode] = scored; continue; }
+      const modeResults = originIds.map((id) => this.dijkstra(id, { extraCost }));
+      scoredFor[mode] = this.scoreForMode(candidateIds, results, modeResults, originIds, routeSlackSec);
+    }
+
     const linesOf = (e) => this.stations[e.stationId].lines;
     const dirOf = this.directionKeyFor(originIds, (e) => this.stations[e.stationId]);
+    const posOf = (e) => this.stations[e.stationId];
+    const minGapKm = opts.minGapKm ?? DIVERSIFY_MIN_GAP_KM;
     const diversify = opts.diversify ?? DIVERSIFY_CANDIDATES;
 
     const decorate = (entry, cutoffSec) => {
-      if (!entry.paths) this.fillRoutes(entry, results, originIds);
+      /* 그 후보를 채점할 때 실제로 쓴 경로표. 기준마다 다르고, 한 후보 안에서도
+         사람마다 다를 수 있다(기준 경로가 너무 느려 시간 최소로 되돌린 사람). */
+      const res = entry.results || results;
+      if (!entry.paths) this.fillRoutes(entry, res, originIds);
       return {
         station: this.stations[entry.stationId],
         maxSec: entry.maxSec,
@@ -379,7 +464,7 @@ export class MetroGraph {
           return {
             originId: oid,
             origin: this.stations[oid].name,
-            sec: results[i].stationTime[entry.stationId],
+            sec: res[i].stationTime[entry.stationId],
             fare: fareFor(km, lines, this.lines),
             surcharges: surchargeLines(lines, this.lines),
             /* 그래프 시간이 화면에 그대로 나갈 때 붙일 오차 폭. ODsay 값으로 덮이면 쓰이지 않는다. */
@@ -407,10 +492,14 @@ export class MetroGraph {
 
     const byMode = {};
     for (const mode of modes) {
+      const entries = scoredFor[mode];
       /* minMax 는 후보 풀 전체(scored)에서 한 번만 구한 값이다. 기준별로 다시 세지 않는다 —
-         같은 참여자·같은 후보 풀이면 "가장 먼 사람 최선값" 은 기준과 무관하게 하나다. */
-      const r = rankByMode(scored, mode, {
-        toleranceSec, slackSec, topN, diversify, linesOf, dirOf, minMaxSec: minMax,
+         같은 참여자·같은 후보 풀이면 "가장 먼 사람 최선값" 은 기준과 무관하게 하나다.
+         (기준 경로로 가면 그 후보의 maxSec 은 커질 수 있다. 그건 후보의 성질이 아니라
+          그 기준을 고른 대가라, 최선값이 아니라 컷오프 안쪽인지로 걸러야 맞다.) */
+      const r = rankByMode(entries, mode, {
+        toleranceSec, slackSec, topN, diversify, linesOf, dirOf, posOf, minGapKm,
+        minMaxSec: minMax,
       });
       byMode[mode] = {
         best: decorate(r.list[0], r.cutoffSec),
@@ -418,6 +507,10 @@ export class MetroGraph {
         selection: {
           ...baseSelection,
           mode,
+          candidateCount: entries.length,
+          /* 각자의 경로도 이 기준으로 다시 뽑았는지. 'time' 이면 시간 최소 경로 그대로다. */
+          routeBasis: scoredFor[mode] === scored ? 'time' : mode,
+          routeSlackMin: scoredFor[mode] === scored ? 0 : routeSlackSec / 60,
           toleranceMin: toleranceSec / 60,
           /* time 모드에서는 밴드 = 동률 밴드. 비용·환승 모드에서는 "시간을 이만큼까지
              양보한 후보 풀" 이다. 이름은 그대로 두어 기존 화면·테스트가 안 깨지게 한다. */
@@ -496,6 +589,45 @@ const MODE_COMPARATORS = {
     || a.sumSec - b.sumSec || a.fareTotal - b.fareTotal,
 };
 
+/**
+ * 기준별 간선 추가비용.
+ *
+ * 비용은 늘 `(그 기준의 값) × LEX + 소요시간(초)` 꼴이다. LEX 가 하루치 초(86,400)보다
+ * 크므로 사전식 정렬이 정확히 성립한다 — 먼저 그 기준을 최소로 하고, 같으면 빠른 쪽.
+ *
+ * 요금은 간선마다 더할 수 있는 값이 아니다(거리 구간요금 + 노선별 별도운임).
+ * 여기서 다루는 건 실제로 갈리는 쪽, 즉 별도운임이다 — 신분당선 1,000원 / GTX-A 1,650원.
+ * 거리 구간(5km당 100원)은 같은 출발·도착 쌍에서 웬만해선 안 갈리고, 갈릴 때도 시간
+ * 최소 경로가 대개 최단거리 쪽이다.
+ *
+ * 별도운임은 그 노선을 '타기 시작할 때' 한 번만 붙인다. 승차 간선마다 붙이면 열 정거장
+ * 타면 열 배가 되어 값이 터지고, 같은 노선을 쓰는 경로끼리의 비교도 망가진다.
+ * 내렸다가 같은 노선을 다시 타면 두 번 세는데(실요금은 한 번), 그런 경로는 어차피 답이
+ * 아니라 실질 차이가 없다.
+ *
+ * @returns {((edge:object)=>number)|null} null 이면 기본(시간 최소)
+ */
+export function extraCostFor(mode, lineTable = {}) {
+  const LEX = 100000;
+  if (mode === 'fare') {
+    return (e) => (e.kind === 'ride' ? 0 : LEX * (lineTable[e.line]?.extraFare || 0));
+  }
+  if (mode === 'transfers') {
+    /* 최초 승차(kind:'board')는 환승이 아니다 */
+    return (e) => (e.kind === 'transfer' ? LEX : 0);
+  }
+  return null;
+}
+
+/** 두 역 사이 거리(km). 지도용이 아니라 "다른 동네인가" 를 가르는 용도라 평면 근사로 충분하다. */
+export function roughKm(a, b) {
+  if (!a || !b || !Number.isFinite(a.lat) || !Number.isFinite(b.lat)
+    || !Number.isFinite(a.lng) || !Number.isFinite(b.lng)) return null;
+  const dy = a.lat - b.lat;
+  const dx = (a.lng - b.lng) * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+  return Math.hypot(dx, dy) * 111;
+}
+
 /** 요청된 모드 목록을 정리한다. 알 수 없는 값은 조용히 버리고, 비면 기본(time) 하나. */
 export function normalizeModes(input) {
   const raw = input === undefined || input === null ? [] : [].concat(input);
@@ -524,7 +656,10 @@ export function normalizeModes(input) {
  *   그 값은 컷오프 밴드('+10분 안 후보 N곳')의 기준선이기도 해서 밴드까지 같이 틀어진다.
  */
 export function rankByMode(entries, mode, opts = {}) {
-  const { toleranceSec = 0, slackSec = 0, topN = 5, diversify = false, linesOf, dirOf } = opts;
+  const {
+    toleranceSec = 0, slackSec = 0, topN = 5, diversify = false,
+    linesOf, dirOf, posOf, minGapKm = 0,
+  } = opts;
   const cmp = MODE_COMPARATORS[mode] || MODE_COMPARATORS.time;
   let localMin = Infinity;
   for (const e of entries) if (e.maxSec < localMin) localMin = e.maxSec;
@@ -542,7 +677,7 @@ export function rankByMode(entries, mode, opts = {}) {
   rest.sort((a, b) => a.maxSec - b.maxSec || a.sumSec - b.sumSec);
 
   const div = diversify && linesOf
-    ? diversifyRanked(pool, topN, linesOf, dirOf)
+    ? diversifyRanked(pool, topN, linesOf, dirOf, { posOf, minGapKm })
     : { list: pool, grouped: 0, reordered: false };
 
   return {
@@ -567,16 +702,22 @@ export function rankByMode(entries, mode, opts = {}) {
  * 후보 3곳이 전부 강남 쪽인 판이 그대로 남는다. 그래서 dirOf 를 주면 방위(참여자
  * 무게중심 기준 8방위)도 같이 본다.
  *
+ * 방위만으로도 모자랐다. 방위는 무게중심에서 본 8칸이라 같은 방향으로 3~4km 늘어선
+ * 역들이 전부 한 칸에 들어간다 — 기준을 바꿔도 후보 3곳이 계속 도심 동쪽 한 덩어리
+ * (충무로·동대문·건대)로 몰린다는 피드백이 그것이다. 그래서 posOf·minGapKm 을 주면
+ * "이미 고른 후보와 실제로 몇 km 떨어져 있는지" 도 함께 본다.
+ *
  * 규칙
  *   - 1위는 절대 건드리지 않는다. 추천은 그대로 추천이어야 한다.
  *   - 노선 구성이 완전히 같은 역(예: 같은 노선의 이웃역)은 대표 하나만 남긴다.
- *   - 2위부터 두 번 훑는다.
- *       1차: 새 노선 '그리고' 새 방향을 함께 데려오는 후보  (가장 잘 섞이는 것부터)
- *       2차: 새 노선 '또는' 새 방향 중 하나라도 데려오는 후보
+ *   - 2위부터 세 번 훑는다. 잘 섞이는 것부터 데려온다.
+ *       1차: 충분히 떨어져 있고 + 새 노선 '그리고' 새 방향
+ *       2차: 충분히 떨어져 있고 + 새 노선 '또는' 새 방향
+ *       3차: 충분히 떨어져 있기만 해도                    (거리라도 벌린다)
  *   - 자리가 남으면 원래 순위대로 메운다 — 다양성 때문에 후보 수가 줄지는 않는다.
  *
- * dirOf 를 주지 않으면 1차는 아무것도 못 고르고 2차가 "새 노선" 규칙이 되어,
- * 방향을 넣기 전과 정확히 같게 동작한다.
+ * posOf/minGapKm 을 주지 않으면 거리 조건이 늘 참이라 3차가 아무것도 못 고르고,
+ * 거리를 넣기 전과 정확히 같게 동작한다. dirOf 도 없으면 방향을 넣기 전과 같다.
  *
  * 밴드 밖 후보는 넘기지 않는다(호출부에서 concat). 그쪽은 실제로 더 나쁜 후보라
  * 순서를 흔들면 안 된다.
@@ -585,12 +726,17 @@ export function rankByMode(entries, mode, opts = {}) {
  * @param {number} topN    화면에 보여줄 후보 수
  * @param {(e:any)=>string[]} linesOf  후보에서 노선 목록을 꺼내는 함수
  * @param {(e:any)=>(string|null)} [dirOf] 후보의 방위 키 (없으면 방향 규칙을 끈다)
+ * @param {object} [opts]
+ * @param {(e:any)=>({lat:number,lng:number}|null)} [opts.posOf] 후보의 좌표
+ * @param {number} [opts.minGapKm] 이미 고른 후보와 이만큼은 떨어져 있어야 한다
  * @returns {{list:Array, grouped:number, reordered:boolean}}
  */
-export function diversifyRanked(band, topN, linesOf, dirOf) {
+export function diversifyRanked(band, topN, linesOf, dirOf, opts = {}) {
   const none = { list: band, grouped: 0, reordered: false };
   if (!Array.isArray(band) || band.length <= 2 || topN <= 1) return none;
 
+  const posOf = typeof opts.posOf === 'function' ? opts.posOf : null;
+  const minGapKm = posOf ? (opts.minGapKm || 0) : 0;
   const sigOf = (e) => [...new Set(linesOf(e) || [])].sort().join('+');
   const dirKey = (e) => (dirOf ? dirOf(e) : null);
   const picked = [band[0]];
@@ -599,23 +745,41 @@ export function diversifyRanked(band, topN, linesOf, dirOf) {
   const seen = new Set([sigOf(band[0])]);
   const dirs = new Set([dirKey(band[0])].filter((d) => d !== null));
 
-  const sweep = (strict) => {
+  /* 좌표를 모르는 역은 거리 조건에서 빼준다 — 모른다고 후보에서 떨어뜨리면
+     좌표 없는 역이 영영 2위 밖으로 못 나온다. */
+  const farEnough = (e) => {
+    if (!minGapKm) return true;
+    const p = posOf(e);
+    if (!p) return true;
+    for (const q of picked) {
+      const d = roughKm(p, posOf(q));
+      if (d !== null && d < minGapKm) return false;
+    }
+    return true;
+  };
+
+  /* level 2 = 새 노선 AND 새 방향, 1 = 새 노선 OR 새 방향, 0 = 거리만 */
+  const sweep = (level) => {
     for (let i = 1; i < band.length && picked.length < topN; i++) {
       if (taken.has(i)) continue;
       const e = band[i];
       const lines = linesOf(e) || [];
       if (seen.has(sigOf(e))) continue;                  // 노선 구성이 똑같은 역은 대표 하나만
+      if (!farEnough(e)) continue;
       const d = dirKey(e);
       const newLine = lines.some((l) => !used.has(l));
       const newDir = d !== null && !dirs.has(d);
-      if (strict ? !(newLine && newDir) : !(newLine || newDir)) continue;
+      if (level === 2 && !(newLine && newDir)) continue;
+      if (level === 1 && !(newLine || newDir)) continue;
+      if (level === 0 && !minGapKm) continue;            // 거리 규칙이 없으면 3차는 건너뛴다
       picked.push(e); taken.add(i); seen.add(sigOf(e));
       for (const l of lines) used.add(l);
       if (d !== null) dirs.add(d);
     }
   };
-  sweep(true);
-  sweep(false);
+  sweep(2);
+  sweep(1);
+  sweep(0);
 
   const list = picked.concat(band.filter((_, i) => !taken.has(i)));
   /* 머리(=화면에 보일 자리)를 채우려고 지나친 후보 수. 뒤에 남은 후보는 세지 않는다 —

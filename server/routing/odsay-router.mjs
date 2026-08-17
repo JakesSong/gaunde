@@ -19,7 +19,7 @@
  */
 import { GraphRouter } from './graph-router.mjs';
 import { rankByMode, normalizeModes } from '../graph.mjs';
-import { ODSAY, DIVERSIFY_CANDIDATES, MODE_SLACK_MIN } from '../config.mjs';
+import { ODSAY, DIVERSIFY_CANDIDATES, DIVERSIFY_MIN_GAP_KM, MODE_SLACK_MIN } from '../config.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -463,6 +463,10 @@ export class OdsayRouter extends GraphRouter {
     const diversify = opts.diversify ?? DIVERSIFY_CANDIDATES;
     const linesOf = (s) => s.station.lines;
     const dirOf = this.graph.directionKeyFor(originIds, (s) => s.station);
+    /* 방위만으로는 같은 방향 3~4km 안에 늘어선 역이 다 한 칸에 들어간다.
+       이미 고른 후보와의 실제 거리도 함께 봐야 후보 3곳이 한 덩어리로 몰리지 않는다. */
+    const posOf = (s) => s.station;
+    const minGapKm = opts.minGapKm ?? DIVERSIFY_MIN_GAP_KM;
 
     const rankMode = (mode) => {
       const blk = baseModes[mode];
@@ -472,7 +476,8 @@ export class OdsayRouter extends GraphRouter {
          다른 기준이 데려온 역까지 한 풀에 섞으면, 기준을 하나 더 켰다는 이유만으로
          기본 기준(시간)의 답이 흔들린다. 기본 기준의 후보는 예전 shortlist 그대로다. */
       const r = rankByMode(entries, mode, {
-        toleranceSec, slackSec, topN, diversify, linesOf, dirOf, minMaxSec: poolMinMaxSec,
+        toleranceSec, slackSec, topN, diversify, linesOf, dirOf, posOf, minGapKm,
+        minMaxSec: poolMinMaxSec,
       });
       /* inBand 는 기준마다 다르다. 공유 객체를 고쳐 쓰면 다른 기준의 표시가 같이 바뀐다. */
       const list = r.list.map((s) => ({ ...s, inBand: s.maxSec <= r.cutoffSec }));

@@ -117,8 +117,12 @@ const RESULT_CACHE_TTL_DAYS = 7;
    모양을 바꿀 때마다 올려서 캐시를 통째로 무효화한다. */
 /* 6: 레그 없는 옛 route_cache 행을 걸러내기 시작했다. 그 전에 만들어진 스냅샷에는
    그래프 폴백 경로가 그대로 굳어 있어서(요약의 환승 수와 그림이 어긋난 채로),
-   route_cache 가 다시 채워져도 스냅샷을 버리지 않으면 화면이 그대로다. */
-const RESULT_SHAPE_REV = 6;
+   route_cache 가 다시 채워져도 스냅샷을 버리지 않으면 화면이 그대로다.
+   7: 계산이 두 군데 바뀌었다 — 기준별 minMaxSec 가 후보 풀 전체 값으로 통일됐고,
+   요금·환승 기준에서는 참여자 개인 경로도 그 기준으로 다시 뽑는다. 옛 스냅샷에는
+   기준마다 다른 최선값과 시간 최소 경로가 굳어 있어서, 버리지 않으면 고친 화면이
+   그 모임에서만 예전 그대로다. */
+const RESULT_SHAPE_REV = 7;
 const graphFingerprint = graph.meta.generatedAt || '';
 const resultCacheStats = { hits: 0, misses: 0 };
 
@@ -166,7 +170,7 @@ function resolveStation(input) {
 /* ------------------------------------------------------------------ 라우트 */
 
 /** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
-const REV = 'modes-round-1';
+const REV = 'mode-routes-round-1';
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, rev: REV, db: dbKind, stations: graph.stations.length,

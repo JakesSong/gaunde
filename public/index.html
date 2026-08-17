@@ -263,6 +263,17 @@
     font-size:11px;line-height:1.4;letter-spacing:-.01em;white-space:nowrap}
   .hops b{font-weight:700;color:var(--ink)}
 
+  /* 늦은 시간 소프트 경고.
+     '실시간 대중교통 기준' 이라는 문구가 첫차·막차까지 보증하는 것으로 읽힌다는 피드백.
+     (23:30에 양재를 추천했는데 일부는 막차가 끊겨 도달할 수 없었다.)
+     정확한 시각표가 없으므로 "막차를 놓친다" 고 계산해서 말하지 않는다 — 지금이 늦은
+     시간이라는 사실만 알리고 확인은 각자에게 맡긴다.
+     flex 로 두지 않는다: 조각마다 flex 아이템이 되어 한국어가 세로로 갈린다(.axis 사고). */
+  .lastwarn{display:block;margin:0 0 12px;padding:9px 11px;border-radius:10px;
+    border:1px solid rgba(239,124,28,.38);background:rgba(239,124,28,.09);
+    font-size:11.5px;line-height:1.55;color:#6B3B0E;letter-spacing:-.01em;word-break:keep-all}
+  .lastwarn b{color:#4A2907;font-weight:700}
+
   /* 시간 외 표식 */
   .marks{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
   .tag{font-size:11px;letter-spacing:-.01em;padding:5px 9px;border-radius:999px;
@@ -563,6 +574,8 @@
         <!-- 캡쳐할 때만 나오는 한 줄. 이미지에는 기준 토글이 없어서, 무슨 기준으로
              고른 결과인지 이미지만 보는 사람은 알 길이 없다. -->
         <p class="shotmode" id="shotmode"></p>
+        <!-- 늦은 시간 소프트 경고. 시각표 데이터가 없으므로 "막차를 놓친다" 고는 말하지 않는다. -->
+        <p class="lastwarn" id="rlast" hidden></p>
         <!-- 결과가 오기 전(또는 못 올 때)에만 뜨는 한 줄. 결과가 뜨면 숨는다 —
              요약은 아래 .keys 두 칸이 이미 하고 있어서 헤더를 따로 두지 않는다. -->
         <p class="rstat" id="rstat" hidden></p>
@@ -647,6 +660,6 @@
 
 <script src="./html2canvas.min.js?v=e87e5507"></script>
 <script src="./config.js?v=16dfd945"></script>
-<script src="./app.js?v=f107310f"></script>
+<script src="./app.js?v=f4c754fc"></script>
 </body>
 </html>
