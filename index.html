@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>가운데 — 모임 중간 지점 찾기</title>
-<meta name="description" content="모임 이름만 적으면 링크가 나옵니다. 각자 출발역만 고르면, 제일 오래 걸리는 사람이 가장 덜 억울한 역을 찾아줍니다.">
+<meta name="description" content="모임 이름만 적으면 링크가 나옵니다. 각자 출발역만 고르면, 제일 오래 걸리는 사람의 시간을 가장 줄이는 역을 찾아줍니다. 시간·요금·환승 중에서 골라 볼 수 있습니다.">
 <meta property="og:title" content="가운데 — 모임 중간 지점 찾기">
 <meta property="og:description" content="출발역만 고르면 끝. 가입 없음.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📍</text></svg>">
@@ -271,6 +271,19 @@
     line-height:1.62;letter-spacing:-.02em;color:#3D453C}
   .verdict b{color:var(--ink)}
 
+  /* ---- 고르는 기준 토글 ----
+     후보 목록 바로 위에 둔다. 이 버튼이 바꾸는 것이 아래 목록과 위 추천이라,
+     화면에서 둘 사이에 있어야 무엇이 바뀌었는지가 눈에 들어온다. */
+  .modes{margin-top:14px;border-top:1px solid var(--rule);padding-top:12px}
+  .modes .rhead{margin-bottom:8px}
+  .moderow{display:flex;gap:6px}
+  .modebtn{flex:1;padding:9px 0;font-size:12.5px;font-weight:700;letter-spacing:-.02em;
+    font-family:inherit;color:#4A524A;background:none;border:1.5px solid var(--rule);
+    border-radius:10px;cursor:pointer}
+  .modebtn:hover{border-color:var(--line)}
+  .modebtn:focus-visible{outline:3px solid var(--pin);outline-offset:2px}
+  .modebtn.on{border-color:var(--line);background:rgba(0,168,77,.06);color:var(--ink)}
+
   .alts{margin-top:14px;border-top:1px solid var(--rule);padding-top:12px}
   .alts .rhead{margin-bottom:6px}
   /* 두 줄이다. 윗줄은 "추천과 뭐가 다른지"(가장 먼 사람 -1분 · 요금 -200원),
@@ -337,6 +350,9 @@
   @media (forced-colors: active){
     .fb{border-color:CanvasText}
     .fbbtn,.fbchip{border-color:CanvasText}
+    /* 고른 기준은 배경색으로만 표시되면 여기서 사라진다 — 테두리를 굵혀 남긴다 */
+    .modebtn{border-color:CanvasText}
+    .modebtn.on{border-width:3px}
   }
 
   /* ---- 결과 액션 ---- */
@@ -513,6 +529,17 @@
       <div class="acts" id="acts" hidden>
         <a class="btn ghost act" id="food" target="_blank" rel="noopener">🍜 맛집<small>카카오맵에서 보기</small></a>
         <a class="btn ghost act" id="cafe" target="_blank" rel="noopener">☕ 카페<small>카카오맵에서 보기</small></a>
+      </div>
+
+      <!-- 무엇을 기준으로 고를지. 서버가 기준별 결과를 통째로 내려주므로
+           눌러도 다시 계산하지 않는다. 기본은 언제나 '시간'이다. -->
+      <div class="modes" id="modes" hidden>
+        <div class="rhead"><b>무엇을 아낄까요?</b><span id="modenote">기본은 시간</span></div>
+        <div class="moderow" id="moderow" role="group" aria-label="고르는 기준">
+          <button class="modebtn on" type="button" data-m="time" aria-pressed="true">시간</button>
+          <button class="modebtn" type="button" data-m="fare" aria-pressed="false">요금</button>
+          <button class="modebtn" type="button" data-m="transfers" aria-pressed="false">환승</button>
+        </div>
       </div>
 
       <div class="alts" id="alts" hidden>
