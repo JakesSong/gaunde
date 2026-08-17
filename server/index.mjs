@@ -115,7 +115,7 @@ async function track(event, meeting, meta) {
 const RESULT_CACHE_TTL_DAYS = 7;
 /* 응답 모양이 바뀌면 옛 스냅샷은 새 화면과 맞지 않는다(후보 개수·환승 필드 등).
    모양을 바꿀 때마다 올려서 캐시를 통째로 무효화한다. */
-const RESULT_SHAPE_REV = 3;
+const RESULT_SHAPE_REV = 4;
 const graphFingerprint = graph.meta.generatedAt || '';
 const resultCacheStats = { hits: 0, misses: 0 };
 
