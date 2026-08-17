@@ -20,14 +20,19 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  * 그 행이 캐시 수명(7일) 동안 살아 있는 한 화면은 조용히 지하철 그래프 경로로
  * 되돌아가고, 요약의 환승 수와 그림이 어긋난 채로 남는다.
  *
- * 그래서 읽을 때 "레그가 없고, 레그를 담기 시작한 뒤에 쓰인 행도 아닌" 행은
- * 캐시에 없는 셈 친다 → 다음 조회에서 ODsay 로 다시 채워진다. 채워 넣을 때
- * 이 판 번호를 같이 새기므로, 정말로 레그가 없는 경로(도보만 있는 응답 등)라도
- * 한 번 다시 물어본 뒤에는 그대로 캐시에 남는다 — 매번 다시 부르지 않는다.
+ * 그래서 읽을 때 "지금 판으로 쓰이지 않은" 행은 캐시에 없는 셈 친다 → 다음 조회에서
+ * ODsay 로 다시 채워진다. 채워 넣을 때 이 판 번호를 같이 새기므로, 정말로 레그가 없는
+ * 경로(도보만 있는 응답 등)라도 한 번 다시 물어본 뒤에는 그대로 캐시에 남는다 —
+ * 매번 다시 부르지 않는다.
  *
  * 레그 모양을 바꿔서 옛 행을 다시 받아와야 할 때 이 번호를 올린다.
+ * 판 번호만으로 무효화가 되려면 조건이 legs_rev 하나여야 한다. 예전에는 "legs 가
+ * 차 있으면 통과" 라는 조건이 OR 로 붙어 있어서, 판을 올려도 레그가 있는 행은 그대로
+ * 살아남았다 — 모양이 바뀐 블롭을 옛 코드가 쓴 채로 두는 셈이라 그 OR 를 뺐다.
+ *
+ *   2 — legs 블롭이 레그 배열에서 기준(시간·요금·환승)별 경로 3벌로 바뀌었다.
  */
-export const ROUTE_CACHE_LEGS_REV = 1;
+export const ROUTE_CACHE_LEGS_REV = 2;
 
 /** 공유 링크 토큰: 사람이 읽고 옮겨적을 수 있게 혼동되는 글자를 뺀 22^10 공간 */
 const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -186,13 +191,13 @@ class SqliteStore {
     }
   }
 
-  /* 레그 없는 옛 행은 없는 셈 친다 — 마지막 조건이 그것이다 (ROUTE_CACHE_LEGS_REV 참고). */
+  /* 옛 판으로 쓰인 행은 없는 셈 친다 — 마지막 조건이 그것이다 (ROUTE_CACHE_LEGS_REV 참고). */
   async getRouteCache(fromId, toId, ttlDays) {
     return this.db.prepare(
       `SELECT minutes, fare, transfers, legs FROM route_cache
        WHERE from_id = ? AND to_id = ?
          AND julianday('now') - julianday(updated_at) < ?
-         AND ((legs IS NOT NULL AND legs <> '') OR COALESCE(legs_rev, 0) >= ?)`,
+         AND COALESCE(legs_rev, 0) >= ?`,
     ).get(fromId, toId, ttlDays, ROUTE_CACHE_LEGS_REV) ?? null;
   }
 
@@ -475,12 +480,12 @@ class PostgresStore {
     );
   }
 
-  /* 레그 없는 옛 행은 없는 셈 친다 — 마지막 조건이 그것이다 (ROUTE_CACHE_LEGS_REV 참고). */
+  /* 옛 판으로 쓰인 행은 없는 셈 친다 — 마지막 조건이 그것이다 (ROUTE_CACHE_LEGS_REV 참고). */
   async getRouteCache(fromId, toId, ttlDays) {
     const { rows } = await this.pool.query(
       `SELECT minutes, fare, transfers, legs FROM route_cache
        WHERE from_id = $1 AND to_id = $2 AND updated_at > now() - ($3 || ' days')::interval
-         AND ((legs IS NOT NULL AND legs <> '') OR COALESCE(legs_rev, 0) >= $4)`,
+         AND COALESCE(legs_rev, 0) >= $4`,
       [fromId, toId, String(ttlDays), ROUTE_CACHE_LEGS_REV],
     );
     return rows[0] ?? null;

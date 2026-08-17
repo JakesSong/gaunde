@@ -19,7 +19,9 @@
  */
 import { GraphRouter } from './graph-router.mjs';
 import { rankByMode, normalizeModes } from '../graph.mjs';
-import { ODSAY, DIVERSIFY_CANDIDATES, DIVERSIFY_MIN_GAP_KM, MODE_SLACK_MIN } from '../config.mjs';
+import {
+  ODSAY, DIVERSIFY_CANDIDATES, DIVERSIFY_MIN_GAP_KM, MODE_SLACK_MIN, MODE_ROUTE_SLACK_MIN,
+} from '../config.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -171,7 +173,7 @@ export class OdsayRouter extends GraphRouter {
    * 그래프 경로의 leg 와 같은 모양으로 맞춘다 — 화면이 둘을 구분하지 않고 그릴 수 있게.
    */
   decorateLegs(legs) {
-    const list = decodeLegs(legs);
+    const list = asLegs(legs);
     if (!list) return null;
     return list.map((l) => {
       const bus = l?.mode === 'bus';
@@ -202,14 +204,15 @@ export class OdsayRouter extends GraphRouter {
   /**
    * 역쌍 하나. 캐시 우선, 없으면 API. 실패하면 null.
    *
-   * 돌려주는 모양은 항상 {minutes, fare, transfers, legs} 다.
+   * 돌려주는 모양은 항상 {minutes, fare, transfers, legs, variants} 다.
+   * 최상위는 시간 기준(가장 빠른 경로)이고, variants 에 기준별 3벌이 같이 온다.
    * route_cache 가 담지 않는 값(pathType)은 캐시에서 살아 돌아오지 않는다.
    * 신선한 응답일 때만 있는 필드를 섞어 내보내면, 캐시가 차오른 뒤에야
    * 조용히 동작이 달라진다. 그래서 여기서 모양을 맞춰 내보낸다.
    *
-   * legs 는 캐시에 늦게 추가한 열이라 예전 행에는 없다(null). 그런 행은 저장소가
-   * 읽을 때 걸러내므로(server/db.mjs 의 ROUTE_CACHE_LEGS_REV) 여기서는 캐시 없음으로
-   * 보이고, 곧바로 ODsay 로 다시 채워진다. 즉 캐시 히트에 legs 가 없다면 그건
+   * legs 블롭은 캐시에 늦게 추가한 열이라 예전 행에는 없거나 옛 모양이다. 그런 행은
+   * 저장소가 읽을 때 걸러내므로(server/db.mjs 의 ROUTE_CACHE_LEGS_REV) 여기서는 캐시
+   * 없음으로 보이고, 곧바로 ODsay 로 다시 채워진다. 즉 캐시 히트에 legs 가 없다면 그건
    * 실제로 탑승 구간이 없는 경로다 — 그때만 화면이 지하철 그래프 경로로 되돌아간다.
    */
   async lookupPair(fromId, toId) {
@@ -217,23 +220,17 @@ export class OdsayRouter extends GraphRouter {
     if (cached) {
       this.stats.cacheHits++;
       this.liveOk = true;
-      return {
-        minutes: cached.minutes, fare: cached.fare,
-        transfers: cached.transfers ?? null, legs: decodeLegs(cached.legs),
-      };
+      return shapeHit(variantsFromRow(cached));
     }
     const fresh = await this.fetchPair(fromId, toId);
     if (!fresh) return null;
     try {
       await this.store.putRouteCache(
-        fromId, toId, fresh.minutes, fresh.fare, fresh.transfers, encodeLegs(fresh.legs));
+        fromId, toId, fresh.minutes, fresh.fare, fresh.transfers, encodeLegs(fresh.variants));
     } catch (e) {
       console.error('[odsay] 캐시 저장 실패:', e.message);
     }
-    return {
-      minutes: fresh.minutes, fare: fresh.fare,
-      transfers: fresh.transfers ?? null, legs: fresh.legs ?? null,
-    };
+    return shapeHit(fresh.variants);
   }
 
   /**
@@ -369,20 +366,19 @@ export class OdsayRouter extends GraphRouter {
       const cached = await this.store.getRouteCache(p.from, p.to, ODSAY.cacheTtlDays);
       if (cached) {
         this.stats.cacheHits++; this.liveOk = true;
-        table.set(key, {
-          minutes: cached.minutes, fare: cached.fare,
-          transfers: cached.transfers ?? null, legs: decodeLegs(cached.legs),
-        });
+        const hit = shapeHit(variantsFromRow(cached));
+        if (hit) table.set(key, hit);
         return;
       }
       if (budget <= 0) return;                    // 예산 초과분은 그래프 값으로 둔다
       budget--;
       const fresh = await this.fetchPair(p.from, p.to);
       if (!fresh) return;
-      table.set(key, fresh);
+      const hit = shapeHit(fresh.variants);
+      if (hit) table.set(key, hit);
       try {
         await this.store.putRouteCache(
-          p.from, p.to, fresh.minutes, fresh.fare, fresh.transfers, encodeLegs(fresh.legs));
+          p.from, p.to, fresh.minutes, fresh.fare, fresh.transfers, encodeLegs(fresh.variants));
       } catch { /* 캐시는 실패해도 그만 */ }
     });
 
@@ -401,57 +397,83 @@ export class OdsayRouter extends GraphRouter {
       };
     }
 
-    /* ODsay 값으로 각 후보를 다시 채점한다 */
+    /* ODsay 값으로 각 후보를 다시 채점한다 — 기준마다 따로.
+     *
+     * ODsay 응답에는 요금·환승이 다른 대안 경로가 같이 들어 있어서(variants),
+     * 요금 기준에서는 그 사람의 "요금이 가장 싼 경로" 를 골라 쓴다. 예전에는 기준과
+     * 무관하게 늘 가장 빠른 경로만 써서, 요금 기준으로 봐도 요금이 최소가 아니었다.
+     *
+     * 한 사람의 시간·요금·환승·legs 는 반드시 같은 한 경로에서 나온다 —
+     * 요약과 그림이 어긋나지 않으려면 그래야 한다.
+     *
+     * 순수 최소화는 여기서도 답이 무너진다. 200원 아끼려고 40분 더 걸리는 경로는
+     * 아무도 안 간다. 그래서 지하철 그래프(scoreForMode)와 같은 규칙을 쓴다 —
+     * 그 사람의 최단 시간 + MODE_ROUTE_SLACK_MIN 안에 드는 경우에만 기준 경로를 쓰고,
+     * 넘으면 그 사람만 시간 최소로 되돌린다. */
     const toleranceSec = Math.round((opts.toleranceMin ?? base.selection.toleranceMin) * 60);
-    const rescored = spots.map((spot) => {
-      const routes = spot.routes.map((r) => {
-        if (r.originId === spot.station.id) {
-          return { ...r, sec: 0, fare: 0, transfersOverride: 0, timeSource: 'same-station' };
-        }
-        const hit = table.get(`${r.originId}|${spot.station.id}`);
-        if (!hit) return { ...r, timeSource: 'graph' };
-        /* 시간을 잰 그 경로를 그대로 그린다. 예전에는 시간만 ODsay 값으로 덮고
-           그림은 지하철 그래프의 최단 경로를 썼는데, 서로 다른 경로라
-           요약의 "환승 2회" 옆에서 그림이 4회를 그리는 일이 생겼다. */
-        const legs = this.decorateLegs(hit.legs);
+    const routeSlackSec = Math.round((opts.modeRouteSlackMin ?? MODE_ROUTE_SLACK_MIN) * 60);
+    const rescoreFor = (mode) => {
+      const list = spots.map((spot) => {
+        const routes = spot.routes.map((r) => {
+          if (r.originId === spot.station.id) {
+            return { ...r, sec: 0, fare: 0, transfersOverride: 0, timeSource: 'same-station' };
+          }
+          const hit = table.get(`${r.originId}|${spot.station.id}`);
+          const v = pickRouteVariant(hit?.variants, mode, routeSlackSec);
+          // 시간을 못 읽는 경로는 없는 셈 친다 — 0분으로 새어 들어가면 순위가 통째로 뒤집힌다
+          if (!v) return { ...r, timeSource: 'graph' };
+          /* 시간을 잰 그 경로를 그대로 그린다. 예전에는 시간만 ODsay 값으로 덮고
+             그림은 지하철 그래프의 최단 경로를 썼는데, 서로 다른 경로라
+             요약의 "환승 2회" 옆에서 그림이 4회를 그리는 일이 생겼다. */
+          const legs = this.decorateLegs(v.legs);
+          return {
+            ...r,
+            sec: Math.round(v.minutes * 60),
+            fare: Number.isFinite(v.fare) && v.fare > 0 ? v.fare : r.fare,
+            // 그래프가 짐작한 환승 횟수 대신 실제 경로의 값 (없으면 표시하지 않는다)
+            transfersOverride: legs ? legs.length - 1
+              : (Number.isFinite(v.transfers) ? v.transfers : null),
+            odsayLegs: legs,
+            timeSource: 'odsay',
+          };
+        });
+        const secs = routes.map((r) => r.sec);
+        /* 환승 수도 ODsay 값으로 다시 센다 — 환승 기준 정렬이 그래프의 짐작이 아니라
+           화면에 실제로 나가는 숫자를 보고 줄을 세워야 근거가 맞는다. */
+        const hops = routes.map((r) => (Number.isFinite(r.transfersOverride)
+          ? r.transfersOverride : (r.path?.transfers ?? 0)));
+        const sumSec = secs.reduce((a, b) => a + b, 0);
+        const fareTotal = routes.reduce((a, r) => a + (r.fare || 0), 0);
         return {
-          ...r,
-          sec: Math.round(hit.minutes * 60),
-          fare: Number.isFinite(hit.fare) && hit.fare > 0 ? hit.fare : r.fare,
-          // 그래프가 짐작한 환승 횟수 대신 실제 경로의 값 (없으면 표시하지 않는다)
-          transfersOverride: legs ? legs.length - 1
-            : (Number.isFinite(hit.transfers) ? hit.transfers : null),
-          odsayLegs: legs,
-          timeSource: 'odsay',
+          ...spot,
+          routes,
+          maxSec: Math.max(...secs),
+          sumSec,
+          fareTotal,
+          transfersTotal: hops.reduce((a, b) => a + b, 0),
+          transfersMax: Math.max(0, ...hops),
+          avgSec: Math.round(sumSec / originIds.length),
+          fareAvg: Math.round(fareTotal / originIds.length),
         };
       });
-      const secs = routes.map((r) => r.sec);
-      /* 환승 수도 ODsay 값으로 다시 센다 — 환승 기준 정렬이 그래프의 짐작이 아니라
-         화면에 실제로 나가는 숫자를 보고 줄을 세워야 근거가 맞는다. */
-      const hops = routes.map((r) => (Number.isFinite(r.transfersOverride)
-        ? r.transfersOverride : (r.path?.transfers ?? 0)));
-      return {
-        ...spot,
-        routes,
-        maxSec: Math.max(...secs),
-        sumSec: secs.reduce((a, b) => a + b, 0),
-        fareTotal: routes.reduce((a, r) => a + (r.fare || 0), 0),
-        transfersTotal: hops.reduce((a, b) => a + b, 0),
-        transfersMax: Math.max(0, ...hops),
-      };
-    });
-    for (const s of rescored) {
-      s.avgSec = Math.round(s.sumSec / originIds.length);
-      s.fareAvg = Math.round(s.fareTotal / originIds.length);
-    }
-    const rescoredById = new Map(rescored.map((s) => [s.station.id, s]));
+      return new Map(list.map((s) => [s.station.id, s]));
+    };
+
+    const rescoredCache = new Map();
+    const rescoredFor = (mode) => {
+      if (!rescoredCache.has(mode)) rescoredCache.set(mode, rescoreFor(mode));
+      return rescoredCache.get(mode);
+    };
 
     /* "가장 먼 사람의 시간" 최선값은 후보 풀 전체의 성질이라 기준과 무관하게 하나다.
-       ODsay 로 다시 잰 후보 전체(= 모든 기준의 shortlist 합집합)에서 한 번만 구한다.
-       기준별 목록 안에서 다시 세면, 그 목록에 최선값을 낸 역이 없을 때 그 기준만
-       더 큰 값을 최선값이라고 말하게 된다 (요금 32분 / 환승 30분으로 갈렸던 원인). */
-    const poolMinMaxSec = rescored.length
-      ? Math.min(...rescored.map((s) => s.maxSec))
+       ODsay 로 다시 잰 후보 전체(= 모든 기준의 shortlist 합집합)에서, 언제나 시간 기준
+       경로로 한 번만 구한다. 기준별 목록 안에서 다시 세면, 그 목록에 최선값을 낸 역이
+       없을 때 그 기준만 더 큰 값을 최선값이라고 말하게 된다 (요금 32분 / 환승 30분으로
+       갈렸던 원인). 요금 기준 경로는 더 느릴 수 있는데, 그 느려진 시간으로 최선값을
+       다시 세면 같은 문제가 다른 얼굴로 돌아온다. */
+    const timeScored = [...rescoredFor('time').values()];
+    const poolMinMaxSec = timeScored.length
+      ? Math.min(...timeScored.map((s) => s.maxSec))
       : base.selection?.minMaxSec;
 
     /* 그래프와 같은 규칙으로, 기준마다 따로 줄을 세운다.
@@ -470,8 +492,9 @@ export class OdsayRouter extends GraphRouter {
 
     const rankMode = (mode) => {
       const blk = baseModes[mode];
+      const scored = rescoredFor(mode);
       const entries = (blk ? [blk.best, ...blk.alternatives] : [])
-        .map((s) => rescoredById.get(s.station.id)).filter(Boolean);
+        .map((s) => scored.get(s.station.id)).filter(Boolean);
       /* 자기 기준의 후보 안에서만 줄을 세운다.
          다른 기준이 데려온 역까지 한 풀에 섞으면, 기준을 하나 더 켰다는 이유만으로
          기본 기준(시간)의 답이 흔들린다. 기본 기준의 후보는 예전 shortlist 그대로다. */
@@ -492,6 +515,10 @@ export class OdsayRouter extends GraphRouter {
           bandSize: r.poolSize,
           modeCutoffSec: r.cutoffSec,
           modeSlackMin: mode === 'time' ? 0 : slackSec / 60,
+          /* 각자의 경로도 이 기준으로 다시 뽑았는지. ODsay 가 준 대안 경로 중에서 고른다.
+             그래프로 남은 사람은 그래프 쪽 규칙이 이미 같은 일을 했다 (같은 여유값). */
+          routeBasis: mode === 'time' ? 'time' : mode,
+          routeSlackMin: mode === 'time' ? 0 : routeSlackSec / 60,
           modeScope: mode === modes[0] ? 'shortlist' : 'graph-shortlist',
           shortlist: spots.length,
           odsayPairs: table.size,
@@ -500,7 +527,8 @@ export class OdsayRouter extends GraphRouter {
       };
     };
 
-    const odsayRoutes = rescored.reduce(
+    /* 실측으로 채운 경로 수. 어느 기준으로 세든 같은 쌍이 채워지므로 시간 기준에서 센다. */
+    const odsayRoutes = timeScored.reduce(
       (n, s) => n + s.routes.filter((r) => r.timeSource === 'odsay').length, 0);
 
     /* 화면에 뭐라고 적을지는 "고른 역" 기준으로 정한다.
@@ -564,14 +592,111 @@ const BUS_COLORS = {
 };
 const BUS_DEFAULT = '#3D5BAB';
 
-/** 캐시에 넣을 문자열로 (없으면 null) */
-export function encodeLegs(legs) {
-  if (!Array.isArray(legs) || !legs.length) return null;
-  try { return JSON.stringify(legs); } catch { return null; }
+/* ------------------------------------------------- 기준별 경로 3벌 (variants)
+ *
+ * ODsay 응답의 result.path 에는 이미 요금·환승이 서로 다른 대안 경로들이 들어 있다.
+ * 예전에는 그중 가장 빠른 것 하나만 쓰고 버렸다 — 그래서 요금 기준으로 봐도
+ * 그 사람의 경로·요금이 최소가 아니었다. 이제 같은 응답에서 세 벌을 뽑아 둔다.
+ * 추가 호출은 없다.
+ *
+ * 한 벌의 모양은 {minutes, fare, transfers, legs} — 화면에 나가는 값이 전부
+ * 같은 경로 하나에서 나와야 "요약은 환승 2회인데 그림은 4회" 가 다시 안 생긴다.
+ */
+
+/** 모르는 값이 이기지 않게 — 정렬 열쇠에서는 +무한대로 본다 */
+const rankNum = (v) => (Number.isFinite(v) ? v : Infinity);
+
+/* 기준별 정렬 열쇠. 첫 항목이 목적함수고 나머지는 동점 처리다 —
+   요금이 같은 경로가 여럿이면 그중 빠른 것을 준다. */
+const VARIANT_KEYS = {
+  time: (c) => [rankNum(c.minutes), rankNum(c.fare), rankNum(c.transfers)],
+  fare: (c) => [rankNum(c.fare), rankNum(c.minutes), rankNum(c.transfers)],
+  transfers: (c) => [rankNum(c.transfers), rankNum(c.minutes), rankNum(c.fare)],
+};
+
+function lessKey(a, b) {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i];
+  return false;
 }
 
-/** 캐시에서 꺼낸 값을 배열로. 예전에 저장된 행에는 아예 없다(= null). */
+/**
+ * 후보 경로들에서 기준별 최선 한 벌씩을 고른다.
+ * 후보가 하나뿐이면 세 벌이 같은 경로가 된다 — 그것도 사실이다.
+ */
+export function pickVariants(candidates) {
+  const list = (candidates || []).filter(Boolean);
+  if (!list.length) return null;
+  const out = {};
+  for (const [mode, keyOf] of Object.entries(VARIANT_KEYS)) {
+    let best = null, bestKey = null;
+    for (const c of list) {
+      const k = keyOf(c);
+      if (!best || lessKey(k, bestKey)) { best = c; bestKey = k; }
+    }
+    out[mode] = best;
+  }
+  return out;
+}
+
+/** 한 벌을 항상 같은 모양으로 (읽을 때마다 필드 유무를 따지지 않게) */
+function shapeVariant(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const legs = Array.isArray(v.legs) && v.legs.length ? v.legs : null;
+  const minutes = Number(v.minutes);
+  const fare = Number(v.fare);
+  const transfers = Number(v.transfers);
+  /* 시간도 경로도 없으면 한 벌이라고 부를 게 없다. 빈 껍데기를 돌려주면
+     호출부가 그걸 진짜 경로로 알고 0분으로 채운다. */
+  if (!(Number.isFinite(minutes) && minutes > 0) && !legs) return null;
+  return {
+    minutes: Number.isFinite(minutes) && minutes > 0 ? minutes : null,
+    fare: Number.isFinite(fare) && fare >= 0 ? fare : null,
+    /* 환승 수는 레그가 있으면 레그에서 센다 — 그림과 숫자가 같은 데서 나와야 한다 */
+    transfers: legs ? legs.length - 1 : (Number.isFinite(transfers) ? transfers : null),
+    legs,
+  };
+}
+
+/** 세 기준이 다 채워진 모양으로. 빠진 기준은 시간 기준으로 메운다. */
+export function normalizeVariants(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const time = shapeVariant(input.time);
+  if (!time) return null;
+  return {
+    time,
+    fare: shapeVariant(input.fare) ?? time,
+    transfers: shapeVariant(input.transfers) ?? time,
+  };
+}
+
+/**
+ * 캐시에 넣을 문자열로 — 기준별 3벌을 통째로 담는다 (없으면 null).
+ *
+ * route_cache 에 열을 더하지 않으려고 legs 블롭 안에 넣는다. 모양이 바뀌었으므로
+ * 예전 판으로 채워진 행은 ROUTE_CACHE_LEGS_REV 로 무효화된다.
+ */
+export function encodeLegs(variants) {
+  const v = normalizeVariants(variants);
+  if (!v) return null;
+  try { return JSON.stringify({ v: 2, modes: v }); } catch { return null; }
+}
+
+/** 캐시에서 꺼낸 블롭을 기준별 3벌로. 못 읽으면 null. */
 export function decodeLegs(raw) {
+  let obj = raw;
+  if (typeof obj === 'string') {
+    if (!obj) return null;
+    try { obj = JSON.parse(obj); } catch { return null; }
+  }
+  if (!obj || typeof obj !== 'object') return null;
+  /* 옛 판은 레그 배열 하나뿐이었다. 캐시에서는 이미 걸러지지만(REV),
+     손에 들어오면 시간 기준 한 벌로 본다 — 버리는 것보다 낫다. */
+  if (Array.isArray(obj)) return normalizeVariants({ time: { legs: obj } });
+  return normalizeVariants(obj.modes ?? obj);
+}
+
+/** 레그 배열로 정리한다 (문자열로 저장된 옛 값도 받아준다) */
+function asLegs(raw) {
   if (Array.isArray(raw)) return raw.length ? raw : null;
   if (typeof raw !== 'string' || !raw) return null;
   try {
@@ -580,11 +705,73 @@ export function decodeLegs(raw) {
   } catch { return null; }
 }
 
+/**
+ * 캐시 행 → 기준별 3벌.
+ * 블롭이 없거나 못 읽으면 열 값(시간 기준 한 벌)으로 만들어 예전처럼 동작하게 둔다.
+ */
+export function variantsFromRow(row) {
+  const decoded = decodeLegs(row?.legs);
+  if (decoded && Number.isFinite(decoded.time.minutes)) return decoded;
+  const one = shapeVariant({
+    minutes: row?.minutes, fare: row?.fare, transfers: row?.transfers,
+    legs: decoded?.time.legs ?? null,
+  }) ?? { minutes: null, fare: null, transfers: null, legs: null };
+  return { time: one, fare: one, transfers: one };
+}
+
+/**
+ * 한 사람의 경로를 기준에 맞게 고른다.
+ *
+ * 순수 최소화는 답이 무너진다 — 200원 아끼려고 40분 더 걸리는 경로는 아무도 안 간다.
+ * 그래서 지하철 그래프(MetroGraph.scoreForMode)와 같은 규칙을 쓴다: 기준 경로가
+ * 그 사람의 최단 시간 + slackSec 안에 들 때만 쓰고, 넘으면 그 사람만 시간 최소로 되돌린다.
+ *
+ * 시간조차 못 읽으면 null — 호출부는 그 사람을 그래프 값으로 남긴다.
+ */
+export function pickRouteVariant(variants, mode, slackSec = 0) {
+  const fastest = variants?.time;
+  if (!fastest || !Number.isFinite(fastest.minutes)) return null;
+  const alt = variants[mode];
+  if (!alt || !Number.isFinite(alt.minutes)) return fastest;
+  return alt.minutes * 60 <= fastest.minutes * 60 + slackSec ? alt : fastest;
+}
+
+/** 캐시에서 왔든 신선한 응답에서 왔든 같은 모양으로 — 최상위는 시간 기준(예전 그대로) */
+export function shapeHit(variants) {
+  const v = normalizeVariants(variants);
+  if (!v) return null;
+  return { ...v.time, variants: v };
+}
+
 /* ------------------------------------------------------------------ 파싱 */
 
 /**
- * ODsay 응답에서 최소 소요시간 경로를 뽑는다.
- * 성공 {ok:true, value:{minutes,fare,pathType}} / 실패 {ok:false, reason}
+ * 경로 하나를 {minutes, fare, transfers, legs, pathType} 로. 못 쓰면 null.
+ */
+export function parsePathCandidate(path) {
+  const t = path?.info?.totalTime;
+  if (typeof t !== 'number' || !Number.isFinite(t) || t <= 0) return null;
+
+  const fare = path.info.payment;
+  /* 환승 횟수 = 탑승 구간 수 - 1. 화면에 "환승 N회" 로 나가는 값이라
+     그래프가 짐작한 값 대신 실제 경로의 값을 써야 한다.
+     레그를 뽑았으면 그 개수로 센다 — 화면에 그리는 그림과 숫자가 같은 데서 나와야
+     "요약은 2회인데 그림은 4회" 같은 어긋남이 생기지 않는다. */
+  const legs = parseLegs(path);
+  const boarded = (Number(path.info.busTransitCount) || 0) + (Number(path.info.subwayTransitCount) || 0);
+  return {
+    minutes: t,
+    fare: typeof fare === 'number' && Number.isFinite(fare) && fare >= 0 ? fare : null,
+    transfers: legs.length ? legs.length - 1 : (boarded > 0 ? boarded - 1 : null),
+    legs: legs.length ? legs : null,
+    pathType: path.pathType ?? path.info.pathType ?? null,
+  };
+}
+
+/**
+ * ODsay 응답에서 기준별 경로를 뽑는다.
+ * 성공 {ok:true, value:{minutes,fare,transfers,legs,pathType,variants}} / 실패 {ok:false, reason}
+ * 최상위 값은 예전과 같이 "가장 빠른 경로" 다.
  */
 export function parseOdsay(body) {
   if (!body || typeof body !== 'object') return { ok: false, reason: 'empty body' };
@@ -610,30 +797,23 @@ export function parseOdsay(body) {
     return { ok: false, reason: Array.isArray(paths) ? 'no path (empty)' : `no path (keys: ${keys || 'none'})` };
   }
 
-  let best = null;
+  /* 대안 경로를 전부 읽어 둔다. 여기 이미 요금·환승이 다른 경로들이 들어 있어서,
+     기준별 재선택에 추가 호출이 필요 없다. */
+  const candidates = [];
   for (const p of paths) {
-    const t = p?.info?.totalTime;
-    if (typeof t !== 'number' || !Number.isFinite(t) || t <= 0) continue;
-    if (!best || t < best.info.totalTime) best = p;
+    const c = parsePathCandidate(p);
+    if (c) candidates.push(c);
   }
-  if (!best) return { ok: false, reason: 'no usable path' };
+  const variants = pickVariants(candidates);
+  if (!variants) return { ok: false, reason: 'no usable path' };
 
-  const fare = best.info.payment;
-  /* 환승 횟수 = 탑승 구간 수 - 1. 화면에 "환승 N회" 로 나가는 값이라
-     그래프가 짐작한 값 대신 실제 경로의 값을 써야 한다.
-     레그를 뽑았으면 그 개수로 센다 — 화면에 그리는 그림과 숫자가 같은 데서 나와야
-     "요약은 2회인데 그림은 4회" 같은 어긋남이 생기지 않는다. */
-  const legs = parseLegs(best);
-  const boarded = (Number(best.info.busTransitCount) || 0) + (Number(best.info.subwayTransitCount) || 0);
-  const transfers = legs.length ? legs.length - 1 : (boarded > 0 ? boarded - 1 : null);
   return {
     ok: true,
     value: {
-      minutes: best.info.totalTime,
-      fare: typeof fare === 'number' && Number.isFinite(fare) && fare >= 0 ? fare : null,
-      transfers,
-      legs: legs.length ? legs : null,
-      pathType: best.pathType ?? best.info.pathType ?? null,
+      // 최상위는 예전 그대로 "가장 빠른 경로" — 이 모양을 읽던 코드가 그대로 동작한다
+      ...variants.time,
+      variants,
+      candidates: candidates.length,
     },
   };
 }
