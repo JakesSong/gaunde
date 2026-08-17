@@ -391,6 +391,7 @@
     $('rkeys').hidden = true;
     $('rbasis').hidden = true;
     $('rhops').hidden = true;
+    $('rlast').hidden = true;
     $('rmarks').hidden = true;
     $('rlink').hidden = true;
     showErr('err2', '');
@@ -681,6 +682,7 @@
         (sel.fareApprox ? ' (근사치)' : '') + '</span></div>';
     $('rkeys').hidden = false;
 
+    renderLastTrain();
     renderBasis(spot);
 
     /* 환승은 기준과 무관하게 늘 붙는다 — 타일에서 밀려난 자리를 여기가 받는다. */
@@ -899,6 +901,20 @@
         why.push('여기는 <b>' + esc(atHome.map(function (r) { return r.name; }).join('·')) +
           '</b>님의 출발역이에요 — 그래서 ' + (isFare ? '요금이' : '환승이') + ' 적게 나왔어요.');
       }
+      /* 같은 역인데 기준을 바꾸면 시간·요금이 달라지는 이유. 이제 고르는 건 만날 역만이
+         아니라 각자의 경로이기도 하다. 말 안 하면 계산이 흔들리는 것처럼 보인다.
+         ODsay 가 답한 사람은 그쪽이 실제로 잰 경로라 우리가 다시 뽑은 게 아니다 —
+         뭉뚱그리면 화면이 안 한 일을 했다고 말하게 된다. */
+      if (sel.routeBasis && sel.routeBasis !== 'time') {
+        var live = spot.routes.filter(function (r) { return r.timeSource === 'odsay'; }).length;
+        why.push('<b>각자의 경로도 이 기준으로 다시</b> 뽑았어요 — ' +
+          (isFare ? '별도운임이 붙는 노선(신분당선 등)을 피하는' : '덜 갈아타는') + ' 쪽으로요. ' +
+          '다만 그 경로가 최단 시간보다 <b>' + (sel.routeSlackMin || 10) + '분</b>을 넘게 느려지는 ' +
+          '사람은 원래의 시간 최소 경로로 되돌려요. 같은 역인데 기준마다 시간·요금이 조금 다른 건 ' +
+          '그래서예요.' +
+          (live ? ' <span style="color:#7C857A">단, <b>실시간</b>이라고 붙은 ' + live +
+            '명은 실시간 길찾기가 실제로 잰 경로 그대로예요 — 잰 값을 우리가 바꾸지는 않아요.</span>' : ''));
+      }
       why.push('<span style="color:#7C857A">시간이 가장 중요하면 <b>시간</b> 버튼으로 되돌리면 돼요.</span>');
     } else if (spot === blk.best) {
       /* 후보에 출발역도 들어간다는 걸 밝힌다. 환승역만 본다고 오해하면
@@ -943,6 +959,37 @@
     $('cafe').href = 'https://map.kakao.com/?q=' + q + '+카페';
     $('acts').hidden = false;
     renderFeedback();
+  }
+
+  /* ---------------------------------------------------------- 막차 (소프트 경고)
+   *
+   * '실시간 대중교통 기준' 이라는 문구가 첫차·막차까지 보증하는 것으로 읽힌다는
+   * 피드백이 있었다 — 23:30에 양재를 추천했는데 일부는 막차가 끊겨 갈 수 없었다.
+   *
+   * 정확한 시각표가 없으므로 "막차를 놓친다" 고 계산해서 말하지 않는다. 지금이 늦은
+   * 시간이라는 사실만 알리고 확인은 각자에게 맡긴다. 서버의 lastTrain(노선 등급별
+   * 통상 범위)도 쓰지 않는다 — 역·방향·요일마다 다른 값을 숫자로 적으면 그게 다시
+   * 보증처럼 읽힌다.
+   */
+  var LATE_FROM_MIN = 22 * 60 + 30;   // 22:30
+  var LATE_TO_MIN = 4 * 60;           // 04:00 — 새벽도 같은 이야기다
+
+  /** 지금이 한국 시각으로 하루 중 몇 분인가(0~1439). 기기 시간대가 무엇이든 KST 로 본다. */
+  function kstMinutes() {
+    var d = new Date();
+    var kst = new Date(d.getTime() + (d.getTimezoneOffset() + 540) * 60000);
+    return kst.getHours() * 60 + kst.getMinutes();
+  }
+
+  function renderLastTrain() {
+    var m = kstMinutes();
+    var late = m >= LATE_FROM_MIN || m < LATE_TO_MIN;
+    $('rlast').innerHTML = late
+      ? '<b>막차 시간이 가까워요.</b> 여기 적힌 소요시간은 열차·버스가 다닐 때 기준이에요. ' +
+        '노선마다 막차가 달라서 지금 출발하면 못 가는 구간이 있을 수 있어요 — ' +
+        '실제 막차는 각자 확인해 주세요.'
+      : '';
+    $('rlast').hidden = !late;
   }
 
   /* ---------------------------------------------------------- 계산 기준 배지
