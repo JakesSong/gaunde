@@ -18,8 +18,8 @@
  *   호출이 깨진 역쌍만 조용히 그래프 값으로 되돌린다. 전체가 죽지 않는다.
  */
 import { GraphRouter } from './graph-router.mjs';
-import { diversifyRanked } from '../graph.mjs';
-import { ODSAY, DIVERSIFY_CANDIDATES } from '../config.mjs';
+import { rankByMode, normalizeModes } from '../graph.mjs';
+import { ODSAY, DIVERSIFY_CANDIDATES, MODE_SLACK_MIN } from '../config.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -261,19 +261,46 @@ export class OdsayRouter extends GraphRouter {
    */
   async findMeetingPoint(originIds, opts = {}) {
     const topN = opts.topN ?? 5;
+    const modes = normalizeModes(opts.modes ?? opts.mode);
     const base = this.graph.findMeetingPoint(originIds, {
       ...opts,
       topN: Math.max(ODSAY.shortlist, topN),
     });
     if (!base) return null;
 
-    const spots = [base.best, ...base.alternatives];
+    const baseModes = base.modes || {
+      [modes[0]]: { best: base.best, alternatives: base.alternatives, selection: base.selection },
+    };
+
+    /* 물어볼 역 목록.
+     *
+     * 기본 기준(시간)의 shortlist 가 먼저고, 다른 기준이 데려온 역만 뒤에 붙인다.
+     * 순서가 중요하다 — 호출 예산(ODSAY.maxCallsPerRequest)이 바닥나면 뒤쪽부터
+     * 그래프 값으로 남는데, 그 손해를 기본 기준이 아니라 부가 기준이 지게 해야 한다.
+     * 부가 기준에서는 화면에 실제로 나가는 topN 곳까지만 물어본다. 그래프에는 shortlist(12곳)
+     * 를 달라고 했으므로 자르지 않으면 기준마다 12곳씩 붙어 호출이 세 배가 된다.
+     * 잘린 뒤쪽은 애초에 그 기준의 목록에도 안 나오는 후보다. */
+    const spots = [];
+    const seenSpot = new Set();
+    for (const mode of modes) {
+      const blk = baseModes[mode];
+      if (!blk) continue;
+      const from = mode === modes[0]
+        ? [blk.best, ...blk.alternatives]
+        : [blk.best, ...blk.alternatives].slice(0, topN);
+      for (const s of from) {
+        if (seenSpot.has(s.station.id)) continue;
+        seenSpot.add(s.station.id);
+        spots.push(s);
+      }
+    }
     const uniqOrigins = [...new Set(originIds)];
 
-    /* 물어볼 역쌍 (출발 == 후보인 경우는 0분이라 물어볼 필요가 없다) */
+    /* 물어볼 역쌍 (출발 == 후보인 경우는 0분이라 물어볼 필요가 없다).
+       역을 바깥 고리에 두어 예산이 앞쪽 후보부터 채워지게 한다. */
     const pairs = [];
-    for (const from of uniqOrigins) {
-      for (const spot of spots) {
+    for (const spot of spots) {
+      for (const from of uniqOrigins) {
         if (from !== spot.station.id) pairs.push({ from, to: spot.station.id });
       }
     }
@@ -300,7 +327,15 @@ export class OdsayRouter extends GraphRouter {
      * fareSource 는 빼먹지 말고 붙인다 — 응답 모양이 경로마다 달라지면
      * 화면이 "근사치" 표기를 놓치고 실측인 척하게 된다. */
     if (!table.size) {
-      return { ...base, selection: { ...base.selection, fareSource: 'estimate', odsayPairs: 0 } };
+      const patched = {};
+      for (const [k, m] of Object.entries(base.modes || {})) {
+        patched[k] = { ...m, selection: { ...m.selection, fareSource: 'estimate', odsayPairs: 0 } };
+      }
+      return {
+        ...base,
+        ...(Object.keys(patched).length ? { modes: patched } : {}),
+        selection: { ...base.selection, fareSource: 'estimate', odsayPairs: 0 },
+      };
     }
 
     /* ODsay 값으로 각 후보를 다시 채점한다 */
@@ -322,60 +357,93 @@ export class OdsayRouter extends GraphRouter {
         };
       });
       const secs = routes.map((r) => r.sec);
+      /* 환승 수도 ODsay 값으로 다시 센다 — 환승 기준 정렬이 그래프의 짐작이 아니라
+         화면에 실제로 나가는 숫자를 보고 줄을 세워야 근거가 맞는다. */
+      const hops = routes.map((r) => (Number.isFinite(r.transfersOverride)
+        ? r.transfersOverride : (r.path?.transfers ?? 0)));
       return {
         ...spot,
         routes,
         maxSec: Math.max(...secs),
         sumSec: secs.reduce((a, b) => a + b, 0),
         fareTotal: routes.reduce((a, r) => a + (r.fare || 0), 0),
+        transfersTotal: hops.reduce((a, b) => a + b, 0),
+        transfersMax: Math.max(0, ...hops),
       };
     });
     for (const s of rescored) {
       s.avgSec = Math.round(s.sumSec / originIds.length);
       s.fareAvg = Math.round(s.fareTotal / originIds.length);
     }
+    const rescoredById = new Map(rescored.map((s) => [s.station.id, s]));
 
-    /* 그래프와 같은 규칙: 동률 밴드 → 평균 → 요금 */
-    const minMax = Math.min(...rescored.map((s) => s.maxSec));
-    for (const s of rescored) s.inBand = s.maxSec <= minMax + toleranceSec;
-    const band = rescored.filter((s) => s.inBand).sort((a, b) =>
-      a.sumSec - b.sumSec || a.fareTotal - b.fareTotal || a.maxSec - b.maxSec);
-    const rest = rescored.filter((s) => !s.inBand).sort((a, b) =>
-      a.maxSec - b.maxSec || a.sumSec - b.sumSec);
+    /* 그래프와 같은 규칙으로, 기준마다 따로 줄을 세운다.
+     *
+     * 기준별 후보 풀은 그래프가 후보 전체(130여 곳)에서 이미 골라 온 것이다. 여기서는
+     * 그 좁은 목록을 ODsay 시간·요금으로 다시 채점해 순서만 바로잡는다 — 쿼터 때문에
+     * 130곳을 다 물어볼 수 없어서다. selection.modeScope 에 그 사실을 남긴다. */
+    const slackSec = Math.round((opts.modeSlackMin ?? MODE_SLACK_MIN) * 60);
+    const diversify = opts.diversify ?? DIVERSIFY_CANDIDATES;
+    const linesOf = (s) => s.station.lines;
+    const dirOf = this.graph.directionKeyFor(originIds, (s) => s.station);
 
-    /* 그래프와 같은 다양성 규칙을 밴드 안에만 적용한다 (1위는 그대로).
-       ODsay 시간으로 다시 매긴 순위에도 같은 쏠림이 생기므로 여기서도 섞는다. */
-    const div = (opts.diversify ?? DIVERSIFY_CANDIDATES)
-      ? diversifyRanked(band, topN, (s) => s.station.lines)
-      : { list: band, grouped: 0, reordered: false };
-    const ranked = div.list.concat(rest);
+    const rankMode = (mode) => {
+      const blk = baseModes[mode];
+      const entries = (blk ? [blk.best, ...blk.alternatives] : [])
+        .map((s) => rescoredById.get(s.station.id)).filter(Boolean);
+      /* 자기 기준의 후보 안에서만 줄을 세운다.
+         다른 기준이 데려온 역까지 한 풀에 섞으면, 기준을 하나 더 켰다는 이유만으로
+         기본 기준(시간)의 답이 흔들린다. 기본 기준의 후보는 예전 shortlist 그대로다. */
+      const r = rankByMode(entries, mode, { toleranceSec, slackSec, topN, diversify, linesOf, dirOf });
+      /* inBand 는 기준마다 다르다. 공유 객체를 고쳐 쓰면 다른 기준의 표시가 같이 바뀐다. */
+      const list = r.list.map((s) => ({ ...s, inBand: s.maxSec <= r.cutoffSec }));
+      return {
+        best: list[0],
+        alternatives: list.slice(1, topN),
+        selection: {
+          ...(blk?.selection ?? base.selection),
+          mode,
+          toleranceMin: toleranceSec / 60,
+          minMaxSec: r.minMaxSec,
+          bandSize: r.poolSize,
+          modeCutoffSec: r.cutoffSec,
+          modeSlackMin: mode === 'time' ? 0 : slackSec / 60,
+          modeScope: mode === modes[0] ? 'shortlist' : 'graph-shortlist',
+          shortlist: spots.length,
+          odsayPairs: table.size,
+          diversity: { grouped: r.grouped, reordered: r.reordered },
+        },
+      };
+    };
 
     const odsayRoutes = rescored.reduce(
       (n, s) => n + s.routes.filter((r) => r.timeSource === 'odsay').length, 0);
 
     /* 화면에 뭐라고 적을지는 "고른 역" 기준으로 정한다.
      * 캐시에 남은 다른 쌍 때문에 table 이 비어있지 않다고 해서
-     * 정작 보여줄 경로가 그래프 값인데 "실시간 기준" 이라고 적으면 거짓말이 된다. */
-    const chosen = ranked[0].routes;
-    const live = chosen.filter((r) => r.timeSource === 'odsay').length;
-    const needed = chosen.filter((r) => r.timeSource !== 'same-station').length;
-    const fareSource = needed === 0 || live === needed ? (live ? 'odsay' : 'estimate')
-      : live > 0 ? 'mixed' : 'estimate';
+     * 정작 보여줄 경로가 그래프 값인데 "실시간 기준" 이라고 적으면 거짓말이 된다.
+     * 기준마다 고른 역이 다르므로 이 판정도 기준마다 따로 한다. */
+    const fareSourceOf = (spot) => {
+      const live = spot.routes.filter((r) => r.timeSource === 'odsay').length;
+      const needed = spot.routes.filter((r) => r.timeSource !== 'same-station').length;
+      return needed === 0 || live === needed ? (live ? 'odsay' : 'estimate')
+        : live > 0 ? 'mixed' : 'estimate';
+    };
+
+    const byMode = {};
+    for (const mode of modes) {
+      const m = rankMode(mode);
+      m.selection.fareSource = fareSourceOf(m.best);
+      m.selection.odsayRoutes = odsayRoutes;
+      byMode[mode] = m;
+    }
+    const primary = byMode[modes[0]];
 
     return {
-      best: ranked[0],
-      alternatives: ranked.slice(1, topN),
-      selection: {
-        ...base.selection,
-        toleranceMin: toleranceSec / 60,
-        minMaxSec: minMax,
-        bandSize: band.length,
-        shortlist: spots.length,
-        odsayPairs: table.size,
-        odsayRoutes,
-        fareSource,
-        diversity: { grouped: div.grouped, reordered: div.reordered },
-      },
+      best: primary.best,
+      alternatives: primary.alternatives,
+      selection: primary.selection,
+      modes: byMode,
       worstPairwiseSec: base.worstPairwiseSec,
     };
   }

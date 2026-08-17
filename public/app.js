@@ -36,6 +36,7 @@
     editingId: null,   // 수정 중인 참여자 row id
     poll: null,
     result: null,      // 마지막 결과 응답
+    mode: 'time',      // 고르는 기준 (time | fare | transfers). 기본은 언제나 시간.
     shownSpot: null,   // 지금 보고 있는 후보 (best 또는 alternatives[i])
     groups: [],        // 지금 그려진 다이어그램의 줄 (같은 역 출발자끼리 묶은 것)
   };
@@ -381,6 +382,7 @@
       : '계산하는 중… 후보 역을 하나씩 비교하고 있어요';
     $('rstat').hidden = false;
     $('alts').hidden = true;
+    $('modes').hidden = true;
     $('acts').hidden = true;
     $('fb').hidden = true;
     $('raxis').hidden = true;
@@ -395,19 +397,14 @@
     api('/api/meetings/' + encodeURIComponent(state.token) + '/result')
       .then(function (d) {
         state.result = d;
+        /* 새 결과는 늘 기본 기준부터 보여준다. 앞 모임에서 요금으로 보고 나갔다고
+           다음 모임이 요금 기준으로 열리면, 기본값이 뭔지 알 수 없게 된다. */
+        state.mode = 'time';
         try { localStorage.setItem(seenKey(), '1'); } catch (e) { /* 사파리 프라이빗 등 */ }
-        renderSpot(d.best);
+        renderModes();
+        renderAlts();
+        renderSpot(modeBlock().best);
         trackResultView();
-
-        var spots = [d.best].concat(d.alternatives);
-        $('altrows').innerHTML = spots.map(function (a, i) {
-          return '<button class="altrow' + (i === 0 ? ' on' : '') + '" type="button" data-i="' + i + '">' +
-            '<span class="atop"><b>' + esc(a.station.name) + '</b>' +
-            '<em' + (i === 0 ? ' class="rec"' : '') + '>' + altWhy(a, d.best) + '</em></span>' +
-            '<span class="abot">가장 먼 사람 ' + a.maxMin + '분 · 평균 ' + a.avgMin + '분 · ' + won(a.fareAvg) + '</span>' +
-            '</button>';
-        }).join('');
-        $('alts').hidden = spots.length < 2;
 
         /* 공유 링크는 결과 직행(?m=…&r=1)이 기본이다 — 받은 사람이 한 번 더
            "결과 보기" 를 눌러야 하면 대부분 거기서 끊긴다. */
@@ -422,15 +419,77 @@
         $('raxis').hidden = true; $('rlegend').hidden = true; $('rwhy').hidden = true;
         $('rkeys').hidden = true; $('rbasis').hidden = true;
         $('rmarks').hidden = true;
+        $('modes').hidden = true;
         $('verdict').textContent = e.message;
       });
   }
+
+  /* ---------------------------------------------------------- 고르는 기준
+   * 서버가 기준별 결과를 통째로 내려준다. 토글은 이미 받은 값을 갈아끼울 뿐
+   * 다시 계산하지 않는다 — 누를 때마다 계산하면 ODsay 쿼터가 세 배로 나간다.
+   *
+   * modes 가 없는 응답(예전 서버, 예전 캐시)에서는 최상위 값이 곧 시간 기준이다.
+   * 그때는 토글을 아예 감춰서 화면이 지금까지와 똑같이 돈다. */
+  var MODE_LABEL = { time: '시간', fare: '요금', transfers: '환승' };
+
+  function modeBlock(mode) {
+    var d = state.result;
+    if (!d) return null;
+    var m = d.modes && d.modes[mode || state.mode];
+    return m || { best: d.best, alternatives: d.alternatives || [], selection: d.selection || {} };
+  }
+
+  function renderModes() {
+    var d = state.result;
+    var has = !!(d && d.modes && Object.keys(d.modes).length > 1);
+    $('modes').hidden = !has;
+    if (!has) return;
+    [].slice.call($('moderow').children).forEach(function (b) {
+      var on = b.dataset.m === state.mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.hidden = !d.modes[b.dataset.m];
+    });
+    /* 기준을 바꾸면 무엇이 달라지는지 한 줄. 시간 기준일 때만 "기본" 이라고 알린다. */
+    var sel = modeBlock().selection || {};
+    $('modenote').textContent = state.mode === 'time'
+      ? '기본은 시간'
+      : '시간은 최대 ' + (sel.modeSlackMin || 10) + '분까지만 양보';
+  }
+
+  function renderAlts() {
+    var blk = modeBlock();
+    if (!blk) return;
+    var spots = [blk.best].concat(blk.alternatives || []);
+    $('altrows').innerHTML = spots.map(function (a, i) {
+      return '<button class="altrow' + (i === 0 ? ' on' : '') + '" type="button" data-i="' + i + '">' +
+        '<span class="atop"><b>' + esc(a.station.name) + '</b>' +
+        '<em' + (i === 0 ? ' class="rec"' : '') + '>' + altWhy(a, blk.best) + '</em></span>' +
+        '<span class="abot">' + altFacts(a) + '</span>' +
+        '</button>';
+    }).join('');
+    $('alts').hidden = spots.length < 2;
+  }
+
+  $('moderow').addEventListener('click', function (e) {
+    var btn = e.target.closest('.modebtn');
+    if (!btn || !state.result || !state.result.modes) return;
+    var m = btn.dataset.m;
+    if (!m || m === state.mode || !state.result.modes[m]) return;
+    state.mode = m;
+    renderModes();
+    renderAlts();
+    renderSpot(modeBlock().best);
+    /* 이 토글을 쓰기는 하는지 알아야 한다. 기본(시간)으로 되돌아오는 건 세지 않는다. */
+    if (m === 'fare' || m === 'transfers') track('mode_' + m);
+  });
 
   /** 후보를 눌러 그 역 기준 결과로 갈아끼운다 (서버가 이미 경로까지 다 내려줬다) */
   $('altrows').addEventListener('click', function (e) {
     var btn = e.target.closest('.altrow');
     if (!btn || !state.result) return;
-    var spots = [state.result.best].concat(state.result.alternatives);
+    var blk = modeBlock();
+    var spots = [blk.best].concat(blk.alternatives || []);
     var spot = spots[+btn.dataset.i];
     if (!spot) return;
     [].slice.call($('altrows').children).forEach(function (el) { el.classList.toggle('on', el === btn); });
@@ -446,13 +505,40 @@
     if (v === 0) return '동일';
     return (v > 0 ? '+' : '-') + Math.abs(v).toLocaleString('ko-KR') + unit;
   }
+  /* 환승 기준이 실제로 줄 세우는 값은 "참여자 환승 횟수 합" 이다(최대가 아니다).
+     최대로 견주면 합이 더 큰 후보가 "환승 -1회" 로 보이면서 추천보다 나아 보이는 줄이
+     생긴다 — 규칙상 맞는 순서인데 화면에서만 뒤집혀 읽힌다. 그래서 이 기준의 숫자는
+     화면 어디서나 합으로 통일하고, 라벨에도 '합' 을 적는다. */
+  function hops(a) { return a.transfersTotal === undefined ? null : a.transfersTotal; }
+
+  /* 지금 기준이 보는 값을 먼저 적는다. 요금 기준인데 시간 차이부터 나오면
+     무엇을 보고 이 순서가 됐는지가 줄에서 안 읽힌다. */
   function altWhy(a, best) {
     if (a === best) return '추천';
-    var out = ['가장 먼 사람 ' + diff(a.maxMin - best.maxMin, '분')];
-    /* 두 번째 값은 실제로 갈리는 쪽을 고른다. 평균이 같으면 요금이 그 역의 유일한 차이다. */
-    if (a.avgMin !== best.avgMin) out.push('평균 ' + diff(a.avgMin - best.avgMin, '분'));
-    else if (a.fareAvg !== best.fareAvg) out.push('요금 ' + diff(a.fareAvg - best.fareAvg, '원'));
+    var out = [];
+    if (state.mode === 'fare') {
+      out.push('요금 ' + diff(a.fareAvg - best.fareAvg, '원'));
+      out.push('가장 먼 사람 ' + diff(a.maxMin - best.maxMin, '분'));
+    } else if (state.mode === 'transfers' && hops(a) !== null && hops(best) !== null) {
+      out.push('환승 합 ' + diff(hops(a) - hops(best), '회'));
+      out.push('가장 먼 사람 ' + diff(a.maxMin - best.maxMin, '분'));
+    } else {
+      out.push('가장 먼 사람 ' + diff(a.maxMin - best.maxMin, '분'));
+      /* 두 번째 값은 실제로 갈리는 쪽을 고른다. 평균이 같으면 요금이 그 역의 유일한 차이다. */
+      if (a.avgMin !== best.avgMin) out.push('평균 ' + diff(a.avgMin - best.avgMin, '분'));
+      else if (a.fareAvg !== best.fareAvg) out.push('요금 ' + diff(a.fareAvg - best.fareAvg, '원'));
+    }
     return out.join(' · ');
+  }
+
+  /* 아랫줄의 절대값도 기준에 맞춰 앞자리를 바꾼다 (값 자체는 늘 같은 세 가지다) */
+  function altFacts(a) {
+    var time = '가장 먼 사람 ' + a.maxMin + '분 · 평균 ' + a.avgMin + '분';
+    if (state.mode === 'fare') return '1인 ' + won(a.fareAvg) + ' · ' + time;
+    if (state.mode === 'transfers' && hops(a) !== null) {
+      return '환승 합 ' + hops(a) + '회 · ' + time;
+    }
+    return time + ' · ' + won(a.fareAvg);
   }
 
   /* ---------------------------------------------------------- 호선 색
@@ -554,17 +640,22 @@
   function renderSpot(spot) {
     var d = state.result;
     state.shownSpot = spot;
-    var sel = d.selection || {};
+    var blk = modeBlock() || { best: d.best, alternatives: d.alternatives || [], selection: d.selection || {} };
+    var sel = blk.selection || {};
 
     /* 상단은 수치 타일이 전부다 — 큰 제목과 설명문은 타일과 같은 숫자를 두 번 말하는
        중복이라 뺐다. 대신 평균은 타일로 되돌린다: "가장 먼 사람" 한 값만 있으면
-       한 사람 때문에 고른 것처럼 보이는데, 실제 2단계 선택은 전체 합으로 정해진다. */
+       한 사람 때문에 고른 것처럼 보이는데, 실제 2단계 선택은 전체 합으로 정해진다.
+       셋째 타일만 기준을 따라간다 — 환승으로 골랐는데 환승 수가 화면에 없으면
+       무엇을 보고 고른 건지 확인할 길이 없다. */
+    var third = state.mode === 'transfers' && hops(spot) !== null
+      ? '<b>' + hops(spot) + '회</b><span>환승 (모두 합)</span>'
+      : '<b>' + won(spot.fareAvg) + '</b><span>1인 요금' + (sel.fareApprox ? ' (근사치)' : '') + '</span>';
     $('rstat').hidden = true;
     $('rkeys').innerHTML =
       '<div class="hi"><b>' + spot.maxMin + '분</b><span>가장 먼 사람</span></div>' +
       '<div><b>' + spot.avgMin + '분</b><span>평균</span></div>' +
-      '<div><b>' + won(spot.fareAvg) + '</b><span>1인 요금' +
-        (sel.fareApprox ? ' (근사치)' : '') + '</span></div>';
+      '<div>' + third + '</div>';
     $('rkeys').hidden = false;
 
     renderBasis(spot);
@@ -700,11 +791,15 @@
         if (surcharge.indexOf(s.name) < 0) surcharge.push(s.name);
       });
     });
+    /* "덜 억울합니다" 는 무엇과 견준 값인지가 문장에 없었다. 견주는 상대는
+       "누군가의 집 앞에서 보자고 했을 때 가장 불리한 사람" 이고, 그 수를 같이 적어야
+       N분이 어디서 나온 차이인지 읽힌다. 억울함의 크기가 아니라 시간 차이를 말한다. */
     $('verdict').innerHTML =
       '가장 멀리서 오는 <b>' + esc(far.names.join('·')) + '</b> 기준으로 <b>' + far.min + '분</b>.<br>' +
       (saved > 0
-        ? '각자 집 앞에서 만나자고 할 때보다 <b>' + saved + '분</b> 덜 억울합니다.'
-        : '누구 집 앞에서 보든 비슷한 거리입니다.') +
+        ? '누군가의 집 앞에서 봤다면 가장 먼 사람이 <b>' + d.worstIfSomeonesHomeMin + '분</b>, ' +
+          '여기로 모이면 <b>' + saved + '분</b> 짧아져요.'
+        : '누구 집 앞에서 봐도 가장 먼 사람 시간은 비슷해요.') +
       '<br><span style="color:#7C857A">' + esc(spot.station.name) + ' · ' +
       spot.station.lines.map(function (l) { return (state.lines[l] || {}).name || l; }).join(', ') +
       (surcharge.length ? ' · ' + esc(surcharge.join('/')) + ' 별도운임 포함' : '') + '</span>';
@@ -724,18 +819,46 @@
          보여주는 후보 = 아래 '다른 후보' 목록의 줄 수  (shown)
        셋은 원래 다른 수다. 다르다는 것까지 적어야 불일치로 안 읽힌다. */
     var pool = sel.candidateCount || sel.shortlist || 0;
-    var shown = 1 + (d.alternatives || []).length;
+    var shown = 1 + (blk.alternatives || []).length;
     var srcs = sel.candidateSources || {};
     var addedOrigins = srcs.originsNotHub || 0;
     var tol = sel.toleranceMin || 4;
     var band = sel.bandSize || 1;
+    var slack = sel.modeSlackMin || 10;
     var floor = Number.isFinite(sel.minMaxSec) ? Math.round(sel.minMaxSec / 60) : null;
     /* 추천보다 "가장 먼 사람" 이 짧은 후보가 목록에 버젓이 보이는 경우(27분 vs 26분).
        규칙상 맞는 결과지만, 근거를 접어둔 채로는 계산이 틀린 것처럼 보인다. */
-    var beaten = (d.alternatives || []).filter(function (a) { return a.maxMin < d.best.maxMin; });
+    var beaten = (blk.alternatives || []).filter(function (a) { return a.maxMin < blk.best.maxMin; });
+    /* 고른 역이 참여자 중 누군가의 출발역인가. 요금 기준에서는 자주 그렇게 되는데
+       (안 움직이는 사람은 0원이다), 그 사실을 안 적으면 계산이 이상한 것처럼 보인다. */
+    var atHome = spot.routes.filter(function (r) { return r.originId === spot.station.id; });
 
     var why = [];
-    if (spot === d.best) {
+    if (spot === blk.best && state.mode !== 'time') {
+      /* 부가 기준의 근거. 시간 기준과 규칙 자체가 달라서 문장도 갈라 놓는다.
+         "그냥 제일 싼 곳" 이 아니라 "시간을 조금만 양보한 것 중 제일 싼 곳" 이다. */
+      var isFare = state.mode === 'fare';
+      why.push('지금은 <b>' + MODE_LABEL[state.mode] + '</b> 기준으로 보고 있어요. ' +
+        '<b>평가한 후보 ' + pool + '곳</b>에서 고른 건 시간 기준과 같아요.');
+      why.push('다만 ' + (isFare ? '요금' : '환승') + '만 줄이면 답이 무너져요 — ' +
+        (isFare
+          ? '누구 한 사람 집 앞이 늘 이깁니다(그 사람 요금이 0원이 되니까요).'
+          : '외곽의 직통역이 늘 이깁니다(한 사람만 편해지고요).') +
+        ' 그래서 <b>가장 먼 사람의 시간</b>이 최선값' +
+        (floor === null ? '' : '(<b>' + floor + '분</b>)') +
+        ' <b>+' + slack + '분</b> 안에 드는 후보 <b>' + band + '곳</b> 안에서만 골라요.');
+      why.push('그중 ' + (isFare
+        ? '<b>모두가 내는 요금 합이 가장 적은</b> 곳이 여기예요 (1인 <b>' + won(spot.fareAvg) + '</b>'
+        : '<b>환승 횟수 합이 가장 적은</b> 곳이 여기예요 (모두 합쳐 <b>' +
+          (hops(spot) === null ? '?' : hops(spot)) + '회</b>' +
+          (spot.transfersMax === undefined ? '' : ', 가장 많은 사람 <b>' + spot.transfersMax + '회</b>')) +
+        ' · 가장 먼 사람 <b>' + spot.maxMin + '분</b>).');
+      if (atHome.length) {
+        why.push('여기는 <b>' + esc(atHome.map(function (r) { return r.name; }).join('·')) +
+          '</b>님의 출발역이에요 — 그래서 ' + (isFare ? '요금이' : '환승이') + ' 적게 나왔어요.');
+      }
+      why.push('<span style="color:#7C857A">시간이 가장 중요하면 <b>시간</b> 버튼으로 되돌리면 돼요.</span>');
+    } else if (spot === blk.best) {
       /* 후보에 출발역도 들어간다는 걸 밝힌다. 환승역만 본다고 오해하면
          "우리 동네가 답인데 왜 안 나오냐" 로 이어진다. */
       why.push('<b>평가한 후보는 ' + pool + '곳</b>이에요 — 환승 되는 역 전체' +
@@ -758,15 +881,18 @@
       why.push('<span style="color:#7C857A">아래 <b>다른 후보</b>에는 이 중 성적이 좋은 순으로 ' +
         '<b>' + shown + '곳</b>만 추려 보여줘요 — ' + pool + '곳을 다 늘어놓지는 않아요.</span>');
     } else {
-      why.push('추천은 <b>' + esc(d.best.station.name) + '</b>이고, 지금은 직접 고른 후보를 보고 있어요.');
+      why.push('추천은 <b>' + esc(blk.best.station.name) + '</b>' +
+        (state.mode === 'time' ? '' : '(' + MODE_LABEL[state.mode] + ' 기준)') +
+        '이고, 지금은 직접 고른 후보를 보고 있어요.');
       why.push('가장 먼 사람 기준으로 ' +
-        '<b>' + (spot.maxMin - d.best.maxMin > 0 ? '+' : '') + (spot.maxMin - d.best.maxMin) + '분</b> 차이예요.');
+        '<b>' + (spot.maxMin - blk.best.maxMin > 0 ? '+' : '') + (spot.maxMin - blk.best.maxMin) + '분</b> 차이예요.');
     }
     why.push('<span style="color:#7C857A">소요시간에는 <b>환승 대기·환승 도보 시간</b>이 모두 들어 있어요.</span>');
     $('rwhybody').innerHTML = why.join(' ');
     $('rwhy').hidden = false;
-    /* 평소엔 접어둔다(정보량). 다만 최댓값 역전이 눈에 보이는 판에서는 펼쳐서 먼저 답한다. */
-    $('rwhy').open = spot === d.best && beaten.length > 0;
+    /* 평소엔 접어둔다(정보량). 다만 최댓값 역전이 눈에 보이는 판에서는 펼쳐서 먼저 답한다.
+       기준을 바꿔 본 판에서도 펼친다 — 왜 다른 역이 나왔는지가 그 자리의 첫 질문이다. */
+    $('rwhy').open = spot === blk.best && (beaten.length > 0 || state.mode !== 'time');
 
     renderMarks(spot);
 
@@ -1136,6 +1262,7 @@
     history.replaceState(null, '', location.pathname);
     state.token = null; state.meeting = null; state.picked = null;
     state.result = null; state.shownSpot = null; state.editingId = null; state.myId = null;
+    state.mode = 'time';
     state.groups = []; state.railPlan = null;
     $('rlink').hidden = true; $('kshare').hidden = true; $('kgap').hidden = true;
     $('made').hidden = true; $('goto1').hidden = true;

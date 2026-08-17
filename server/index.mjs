@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { MetroGraph, normalizeName } from './graph.mjs';
 import { openStore, TRACKED_EVENTS, deviceKey } from './db.mjs';
 import { createRouter } from './routing/index.mjs';
-import { TOLERANCE_MIN, FARE, LAST_TRAIN_APPROX, BUSY_AREA_NAMES } from './config.mjs';
+import { TOLERANCE_MIN, FARE, LAST_TRAIN_APPROX, BUSY_AREA_NAMES, MODES, DEFAULT_MODE } from './config.mjs';
 import { parseRange } from './daterange.mjs';
 import { lookupEgressIp } from './egress-ip.mjs';
 
@@ -163,7 +163,7 @@ function resolveStation(input) {
 /* ------------------------------------------------------------------ 라우트 */
 
 /** 배포된 빌드를 구분하기 위한 표식. 배포 확인이 필요한 변경마다 손으로 올린다. */
-const REV = 'feedback-round-2';
+const REV = 'modes-round-1';
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, rev: REV, db: dbKind, stations: graph.stations.length,
@@ -333,8 +333,11 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
   }
 
   /* 후보를 6개까지 보여줬더니 "너무 많다" 는 피드백이 있었다.
-     best + 대안 2개 = 목록 3개면 비교하기에 충분하다. */
-  const result = await router.findMeetingPoint(originIds, { topN: 3 });
+     best + 대안 2개 = 목록 3개면 비교하기에 충분하다.
+
+     세 기준을 한 번에 계산해 내려보낸다. 토글할 때마다 다시 물어보면 ODsay 쿼터를
+     세 배로 쓰고, 캐시도 기준마다 따로 생긴다. 계산 자체는 3모드 합쳐 2ms 수준이다(실측). */
+  const result = await router.findMeetingPoint(originIds, { topN: 3, modes: MODES });
   if (!result) return res.status(500).json({ error: '중간지점을 계산하지 못했습니다.' });
 
   const shapeSpot = (spot) => {
@@ -381,6 +384,10 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
       totalMin: Math.round(spot.sumSec / 60),
       fareAvg: spot.fareAvg,
       fareTotal: spot.fareTotal,
+      /* 환승 수는 화면에 나간 값에서 다시 센다. spot.transfersTotal 은 그래프가 짐작한
+         값이라, ODsay 가 실제 환승 횟수를 준 경로에서는 표와 어긋난다. */
+      transfersTotal: routes.reduce((a, r) => a + r.transfers, 0),
+      transfersMax: Math.max(0, ...routes.map((r) => r.transfers)),
       inBand: spot.inBand,
       timeBasis,
       /* 그래프로 낸 사람 중 가장 큰 오차 폭. 화면에는 "대략 ±N분" 으로 나간다. */
@@ -404,26 +411,46 @@ app.get('/api/meetings/:token/result', asyncRoute(async (req, res) => {
     cached: false,
   });
 
-  const payload = {
-    meeting: shapeMeeting(meeting, participants),
+  const shapeSelection = (sel) => ({
+    ...sel,
+    routing: router.name,
+    // ODsay 가 요금을 준 경우엔 근사치가 아니다
+    fareApprox: (sel.fareSource ?? 'estimate') !== 'odsay' && FARE.approx,
+    /* "환승 시간은 따진 건가?" 라는 질문이 반복돼서 응답에 명시한다.
+       자체 그래프는 환승마다 도보 150초 + 배차의 절반을 더하고,
+       ODsay 경로는 실제 환승 대기가 포함된 시간이라 어느 쪽이든 참이다. */
+    includesTransferTime: true,
+    cached: false,
+  });
+
+  /* 기준(시간·요금·환승)별 결과를 통째로 내려보낸다 — 화면 토글이 재요청 없이 갈아끼운다.
+     최상위 best/alternatives/selection 은 예전 그대로 기본 기준(시간)이다. 오래된 캐시나
+     modes 를 모르는 화면이 와도 그 자리만 읽으면 지금까지와 똑같이 동작한다. */
+  const shapedModes = {};
+  for (const [name, m] of Object.entries(result.modes || {})) {
+    shapedModes[name] = {
+      best: shapeSpot(m.best),
+      alternatives: m.alternatives.map(shapeSpot),
+      selection: shapeSelection(m.selection),
+    };
+  }
+  const primary = shapedModes[result.selection?.mode || DEFAULT_MODE] || {
     best: shapeSpot(result.best),
     /** 프런트에서 후보를 눌러 바로 전환할 수 있게 경로까지 통째로 내려준다 */
     alternatives: result.alternatives.map(shapeSpot),
     /** 어떻게 골랐는지 — 화면 각주와 디버깅용 */
-    selection: {
-      ...result.selection,
-      routing: router.name,
-      // ODsay 가 요금을 준 경우엔 근사치가 아니다
-      fareApprox: (result.selection.fareSource ?? 'estimate') !== 'odsay' && FARE.approx,
-      /* "환승 시간은 따진 건가?" 라는 질문이 반복돼서 응답에 명시한다.
-         자체 그래프는 환승마다 도보 150초 + 배차의 절반을 더하고,
-         ODsay 경로는 실제 환승 대기가 포함된 시간이라 어느 쪽이든 참이다. */
-      includesTransferTime: true,
-    },
+    selection: shapeSelection(result.selection),
+  };
+
+  const payload = {
+    meeting: shapeMeeting(meeting, participants),
+    best: primary.best,
+    alternatives: primary.alternatives,
+    selection: primary.selection,
+    ...(Object.keys(shapedModes).length > 1 ? { modes: shapedModes } : {}),
     /** 가장 불리한 사람이 "누군가의 집 앞"으로 갈 때의 최대 소요시간 — 절감 효과 문구용 */
     worstIfSomeonesHomeMin: Math.round(result.worstPairwiseSec / 60),
   };
-  payload.selection.cached = false;
 
   /* 저장 실패가 응답을 막지 않게 한다. 다음 요청에서 다시 계산하면 그만이다.
    * 동시에 두 요청이 계산했더라도 같은 키로 upsert 되므로 결과는 같다. */

@@ -12,8 +12,60 @@
  * 그 안에서 평균 소요시간이 가장 낮은 역을 고른다.
  *
  * 0 으로 두면 기존의 순수 minimax 와 정확히 같아진다.
+ *
+ * 이 값은 "실측이 100%일 때" 의 바닥값이다. 실제 밴드 폭은 노선도의 실측률에
+ * 따라 toleranceMinFor() 가 넓힌다 — 아래 주석 참고.
  */
 export const TOLERANCE_MIN = 4;
+
+/**
+ * 실측률이 낮을 때까지 넓힐 수 있는 밴드 폭의 상한(분).
+ *
+ * 왜 실측률에 연동하나: 구간 주행시간의 66%(2026-08 기준 measuredRatio 0.34)는
+ * 실측이 아니라 거리 기반 추정이다. 추정 비중이 클수록 후보 A 가 B 보다 1분 빠르다는
+ * 계산 자체가 흔들리므로, "사실상 동률" 로 볼 폭도 같이 넓어져야 맞다.
+ * 고정 ±4분은 실측 100% 를 가정한 값이었다.
+ *
+ * 보수적으로 둔다 — 밴드가 넓어질수록 minimax(가장 먼 사람) 의 구속력이 약해져
+ * 한 사람이 더 멀리 나가는 답이 통과될 수 있다. 그래서 상한은 6분까지만이다.
+ */
+export const TOLERANCE_MAX_MIN = 6;
+
+/**
+ * 노선도 실측률(0~1) → 동률 밴드 폭(분).
+ * 실측 100% 면 TOLERANCE_MIN, 0% 면 TOLERANCE_MAX_MIN. 그 사이는 선형.
+ * 화면에 "±N분" 으로 그대로 나가는 값이라 정수로 떨어뜨린다.
+ */
+export function toleranceMinFor(measuredRatio) {
+  const r = Number.isFinite(measuredRatio) ? Math.min(1, Math.max(0, measuredRatio)) : 1;
+  return Math.round(TOLERANCE_MIN + (TOLERANCE_MAX_MIN - TOLERANCE_MIN) * (1 - r));
+}
+
+/**
+ * 최적화 모드.
+ *
+ *   time      가장 먼 사람의 시간을 줄이고(minimax), 동률 밴드 안에서 합계가 가장 짧은 곳
+ *   fare      1인 평균 요금이 가장 싼 곳
+ *   transfers 참여자 환승 횟수 합이 가장 적은 곳
+ *
+ * 기본은 언제나 time 이다. 나머지는 사용자가 결과 화면에서 직접 고를 때만 쓰인다.
+ */
+export const MODES = ['time', 'fare', 'transfers'];
+export const DEFAULT_MODE = 'time';
+
+/**
+ * 비용·환승 모드가 시간을 얼마나 양보할 수 있는지(분).
+ *
+ * 왜 필요한가: 요금이나 환승만 순수하게 최소화하면 답이 무너진다.
+ * 요금은 "누군가의 집 앞" 이 늘 이긴다 — 그 사람 몫이 0원이 되기 때문이다.
+ * (3명이 중간 허브에서 만나면 1,550원 × 3 이지만, A 네 동네면 × 2 다.
+ *  거리 요금 차이 100원 단위로는 절대 못 뒤집는다.)
+ * 환승도 마찬가지로 종점 쪽 직통역이 유리해진다.
+ *
+ * 그래서 두 모드 모두 "가장 먼 사람의 시간" 이 최선값 + 이 폭 안에 드는 후보 중에서만
+ * 고른다. 즉 최적화가 아니라 제약 최적화다 — 화면 근거 문구도 그렇게 적는다.
+ */
+export const MODE_SLACK_MIN = 10;
 
 /**
  * 만날 역 후보 제한.

@@ -601,7 +601,9 @@ class PostgresStore {
  * 이벤트 총계와 "모임 단위" 퍼널을 나눠서 낸다.
  * 결과 화면은 새로고침하면 또 기록되므로 총계는 부풀 수 있고, 퍼널은 모임 중복을 제거한다. */
 const KPI_TARGET_PERCENT = 30;
-export const TRACKED_EVENTS = ['room_created', 'origin_submitted', 'result_viewed', 'result_view', 'share_clicked', 'share_kakao', 'result_feedback'];
+/* mode_fare / mode_transfers 는 결과 화면의 기준 토글을 실제로 쓰는지 보는 값이다.
+   기본(시간)으로 되돌아오는 건 세지 않는다 — 켜본 적이 있는지가 알고 싶은 것이다. */
+export const TRACKED_EVENTS = ['room_created', 'origin_submitted', 'result_viewed', 'result_view', 'share_clicked', 'share_kakao', 'result_feedback', 'mode_fare', 'mode_transfers'];
 
 /**
  * 기기 식별자를 모임별로 해시한 값 (events.client_key).
